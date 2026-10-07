@@ -86,6 +86,44 @@ button { font: inherit; color: inherit; }
 .counter span { font-size: 18px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
 .counter small { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; opacity: .7; margin-top: 2px; }
 .counter.bump span { animation: bump .45s var(--spring); }
+/* Install pill (header, next to the cards-left badge) */
+.install-btn {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  height: 34px; padding: 0 13px 0 10px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 700; color: #2a1650; letter-spacing: -.005em;
+  background: linear-gradient(135deg, #ffe08a, #ffb37a 55%, #ff8fa3); border: 0;
+  box-shadow: 0 6px 18px rgba(255, 140, 90, .35), inset 0 1px 0 rgba(255, 255, 255, .6);
+  animation: popIn .5s var(--spring) both; -webkit-tap-highlight-color: transparent;
+}
+.install-btn[hidden] { display: none; }
+.install-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.install-btn:active { transform: scale(.95); }
+.install-btn[data-mode="help"] {
+  height: 30px; padding: 0 11px 0 8px; font-size: 12px; color: #fff; font-weight: 650;
+  background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .22); box-shadow: none;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.install-btn[data-mode="help"] svg { width: 14px; height: 14px; }
+.install-wrap { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center; }
+.install-wrap[hidden] { display: none; }
+.install-backdrop { position: absolute; inset: 0; background: rgba(8, 3, 28, .55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); animation: fadeIn .25s both; }
+.install-sheet {
+  position: relative; width: 100%; max-width: 520px; color: #24123f; text-align: center;
+  background: linear-gradient(180deg, #fffaf3, #fff); border-radius: 26px 26px 0 0;
+  padding: 10px 22px calc(18px + var(--safe-b)); box-shadow: 0 -18px 50px rgba(10, 4, 40, .4);
+  animation: sheetUp .38s var(--ease-out) both;
+}
+.install-sheet .grabber { width: 40px; height: 5px; border-radius: 5px; background: rgba(36, 18, 63, .15); margin: 0 auto 12px; }
+.install-icon { border-radius: 16px; box-shadow: 0 8px 22px rgba(255, 120, 80, .3); }
+.install-sheet h3 { margin: 10px 0 4px; font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
+.install-sub { margin: 0 0 14px; font-size: 13.5px; color: rgba(36, 18, 63, .65); }
+.install-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; text-align: left; }
+.install-steps li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 16px; background: #f6f0ff; font-size: 14px; line-height: 1.35; }
+.install-steps .ico { flex: none; width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; background: #fff; color: #6b4de6; box-shadow: 0 2px 8px rgba(80, 50, 160, .12); font-size: 18px; }
+.install-steps .ico svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.install-note { margin: 12px 4px 14px; font-size: 12.5px; color: rgba(36, 18, 63, .6); }
+.install-done { width: 100%; height: 48px; border: 0; border-radius: 16px; font: inherit; font-size: 15px; font-weight: 750; color: #fff; cursor: pointer; background: linear-gradient(135deg, #7b5cff, #ff6f91); box-shadow: 0 8px 20px rgba(123, 92, 255, .35); }
+@media (max-width: 380px) { .install-btn[data-mode="prompt"] span { display: none; } .install-btn[data-mode="prompt"] { padding: 0 9px; } }
 @keyframes bump { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
 .progress { height: 4px; margin: 0 20px; border-radius: 4px; background: rgba(255, 255, 255, .12); overflow: hidden; }
 .progress-fill { height: 100%; width: 0; border-radius: 4px; background: linear-gradient(90deg, #ffd27a, #ff8c5a, #ff5f8f); transition: width .6s var(--ease-out); box-shadow: 0 0 12px rgba(255, 170, 110, .7); }

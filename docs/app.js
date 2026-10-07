@@ -81,7 +81,9 @@
   // One code path: the app always talks to /api/*. Normally that's the server; in the static demo (GitHub Pages,
   // window.MD_STATIC_DEMO, or ?demo=static) an in-browser mock answers instead. Nothing else changes.
   const STATIC_DEMO = window.MD_STATIC_DEMO === true || /\.github\.io$/i.test(location.hostname) || new URLSearchParams(location.search).get('demo') === 'static';
-  const apiFetch = STATIC_DEMO ? mockApi() : (path, opts) => fetch(path, opts);
+  const rawFetch = STATIC_DEMO ? mockApi() : (path, opts) => fetch(path, opts);
+  let inflight = 0; // API calls in progress; an app update waits for these before reloading
+  const apiFetch = (path, opts) => { inflight++; return Promise.resolve().then(() => rawFetch(path, opts)).finally(() => { inflight--; }); };
   function mockApi() {
     // Deck = demo-deck.json (built by scripts/build-pages.js from scripts/sample-cards.js + the feedback card, gestures
     // already resolved). Answers live in memory only, so every reload is a fresh deck. Nothing leaves the browser.
@@ -915,10 +917,77 @@
     if (state.loaded && !state.deck.length) loadDeck();
   });
 
+  // ---------- install (Add to home screen) ----------
+  // Chrome fires beforeinstallprompt when the app is installable: keep it and offer a header pill that calls prompt().
+  // If it never fires (in-app browser, already installed, Chrome's own heuristics), offer a small "Install" help sheet.
+  const displayMode = () => ['fullscreen', 'standalone', 'minimal-ui', 'window-controls-overlay'].find((m) => matchMedia(`(display-mode: ${m})`).matches) || 'browser';
+  const isStandalone = () => displayMode() !== 'browser' || navigator.standalone === true;
+  const install = { deferred: null, bipFired: false, installed: false };
+  function diag(event, extra = {}) {
+    if (STATIC_DEMO) return; // no backend on the static demo
+    const body = { ua: navigator.userAgent, displayMode: displayMode(), bipFired: install.bipFired, swControlled: !!(navigator.serviceWorker && navigator.serviceWorker.controller),
+      standalone: isStandalone(), installed: install.installed, ts: new Date().toISOString(), event, path: location.pathname, ...extra };
+    fetch('/api/diag', { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
+  }
+  const installBtn = $('#installBtn'), installWrap = $('#installWrap');
+  function showInstall(mode) {
+    if (install.installed || isStandalone()) { installBtn.hidden = true; return; }
+    installBtn.dataset.mode = mode;
+    installBtn.querySelector('span').textContent = mode === 'prompt' ? 'Install app' : 'Install';
+    installBtn.setAttribute('aria-label', mode === 'prompt' ? 'Install Morning Deck' : 'How to install Morning Deck');
+    installBtn.hidden = false;
+  }
+  const openInstallHelp = () => { installWrap.hidden = false; $('#installDone').focus({ preventScroll: true }); };
+  const closeInstallHelp = () => { installWrap.hidden = true; };
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault(); install.deferred = e;
+    const first = !install.bipFired; install.bipFired = true; showInstall('prompt');
+    if (first && install.loadSent) diag('bip-late');
+  });
+  window.addEventListener('appinstalled', () => {
+    install.installed = true; install.deferred = null; installBtn.hidden = true; closeInstallHelp();
+    toast('Installed! Morning Deck is on your home screen', COLORS.right, 2800); diag('appinstalled');
+  });
+  matchMedia('(display-mode: standalone)').addEventListener?.('change', () => { if (isStandalone()) installBtn.hidden = true; });
+  installBtn.addEventListener('click', async () => {
+    const ev = install.deferred;
+    if (!ev) { openInstallHelp(); diag('help-opened'); return; }
+    install.deferred = null; // a prompt event can only be used once
+    try {
+      ev.prompt();
+      const { outcome } = await ev.userChoice;
+      diag('prompt', { outcome });
+      if (outcome === 'accepted') { installBtn.hidden = true; toast('Installing Morning Deck…', COLORS.right, 2400); }
+      else { toast('No problem. You can install it later from here or the ⋮ menu', '#fff', 2800); showInstall('help'); }
+    } catch (err) { diag('prompt-error', { outcome: 'error' }); showInstall('help'); openInstallHelp(); }
+  });
+  $('#installDone').addEventListener('click', closeInstallHelp);
+  $('#installBackdrop').addEventListener('click', closeInstallHelp);
+  setTimeout(() => {
+    if (!install.bipFired && !isStandalone() && !state.locked) showInstall('help');
+    install.loadSent = true; if (!state.locked) diag('load');
+  }, 4000);
+
   greeting();
   render();
   loadConfig();
   flushOutbox().finally(() => loadDeck({ initial: true }));
-  if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW registration failed', e)));
-  window.MorningDeck = { state, swipe, openSheet, undo, flushOutbox, syncViewport, confetti }; // handy for debugging
+  if ('serviceWorker' in navigator) {
+    // App updates: the new SW skips waiting and claims this page; reload once to pick up the new shell,
+    // but never mid-swipe, with the reply sheet open, or while an answer/photo is still being sent.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    const reloadWhenIdle = () => {
+      if (state.busy || state.sheetCard || inflight > 0 || !installWrap.hidden) return setTimeout(reloadWhenIdle, 800);
+      location.reload();
+    };
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading) return; // first install: this page is already current
+      reloading = true; toast('Updating Morning Deck…', '#fff', 1600); setTimeout(reloadWhenIdle, 600);
+    });
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+    }).catch((e) => console.warn('SW registration failed', e)));
+  }
+  window.MorningDeck = { state, swipe, openSheet, undo, flushOutbox, syncViewport, confetti, install, diag }; // handy for debugging
 })();

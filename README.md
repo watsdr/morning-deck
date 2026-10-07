@@ -39,6 +39,16 @@ triple-tap to reply with text or photos. Installable PWA (Android Chrome) + a ti
    Each answer has `value` (e.g. `yes`/`no`/`skip`/`snooze`), optional `text` and photo `attachments`, and echoes your card's `replyTo`.
    See [Card intake format](#card-intake-format) and [API](#api).
 
+## Installing on your phone
+
+When Chrome says the app is installable, it fires `beforeinstallprompt`. The app keeps that event and shows an **Install app** pill
+next to the cards-left badge; tapping it opens Chrome's install dialog. If the event doesn't arrive within about 4 s (in-app browsers,
+already installed, Chrome's own rules), a smaller **Install** button opens a short help sheet: the Install icon in the address bar,
+⋮ → *Install and create shortcut* / *Add to home screen*, or Share → *Add to home screen*. Inside another app's browser, choose ⋮ → *Open in Chrome* first.
+Nothing is shown when the app already runs installed (`display-mode: standalone`). Each page load also sends a small diagnostics
+beacon (`POST /api/diag`, UA + display/SW flags only) so you can see what the phone's Chrome reports in `logs/diag.log`.
+New releases update themselves: the service worker skips waiting and claims the page, and the page reloads once it's idle.
+
 ## Use it with a Grok Bot
 
 Morning Deck is a good inbox for a Grok Bot (or any assistant with a shell) and the other bots it works with:
@@ -251,6 +261,7 @@ Example card:
 | POST | `/api/uploads` | one image: raw bytes (`Content-Type: image/*` or `application/octet-stream`), or JSON `{data: "<base64 or data: URL>", clientUploadId?}`. Max **8 MB**. The type comes from the file's magic bytes (jpeg/png/webp/gif/avif/heic; SVG and anything else get `415`). Optional `X-Client-Upload-Id` header makes retries return the same upload. Stores `data/uploads/<id>.<ext>` and returns `{id, url, mime, size, width, height, path}` (201, or 200 for a duplicate) |
 | GET | `/api/uploads/<id>` | the image bytes (same auth as the rest of the API) |
 | POST | `/api/answers/undo` | `{answerId}` (or `{cardId}` / `{}` = latest) |
+| POST | `/api/diag` | install diagnostics from the app: `{ua, displayMode, bipFired, swControlled, standalone, ts, event}` → one JSON line in `logs/diag.log` (`MD_DIAG_LOG`), 204 |
 | GET | `/api/answers` | answer log. `?since=ISO` (by `recordedAt`), `?source=<name or sourceId>`, `?cardId=`, `?all=1` to include undone answers + undo entries |
 
 Answer entry: `{id, cardId, source, sourceId, cardTitle, cardType, sample, gesture, label, value, text?, attachments?, answeredAt, recordedAt, replyTo?, snoozedUntil?, builtin?}`.
@@ -293,6 +304,7 @@ scripts/demo.sh         public demo instance (MD_DEMO=1, own data dir/env/port/q
 scripts/build-pages.js  builds docs/ (static GitHub Pages demo with the in-browser mock API)
 docs/                   generated static demo site (don't edit by hand)
 test/pages-demo.js      Playwright check of the static demo: 5 gestures, undo, feedback card last, cleared screen
+test/install.js         install flow check (real + simulated beforeinstallprompt, help sheet, /api/diag, SW auto-update)
 test/isolated.js        runs a test against a throwaway server (temp MD_DATA_DIR, port 8799, seeded SAMPLE deck)
 test/e2e.js             Playwright (system Chrome) touch-driven test, writes screenshots/ + verify.json
 test/e2e-photos.js      photos, offline queue, keyboard (resized + overlay visualViewport), feedback card, confetti; verify-photos.json

@@ -40,13 +40,16 @@ function seedDemo() {
     .then(() => console.log(`${now.toISOString()} demo: seeded ${cards.length} sample cards in ${core.DATA_DIR}`));
 }
 const PUBLIC = path.join(core.ROOT, 'public');
+// Install diagnostics from the phone (POST /api/diag): one JSON line per beacon, UA + display/SW flags only.
+const DIAG_LOG = process.env.MD_DIAG_LOG || path.join(core.ROOT, 'logs', 'diag.log');
+const DIAG_MAX_BYTES = 2 * 1024 * 1024;
 const COOKIE = 'md_session';
 const COOKIE_VALUE = crypto.createHash('sha256').update('morning-deck-cookie:' + TOKEN).digest('base64url');
 
 // ---------- helpers ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
 // Public files carry no data: Chrome fetches the manifest and icons without credentials.
-const PUBLIC_PATHS = new Set(['/manifest.webmanifest', '/favicon.ico', '/robots.txt']);
+const PUBLIC_PATHS = new Set(['/manifest.webmanifest', '/sw.js', '/favicon.ico', '/robots.txt']);
 const isPublic = (p) => PUBLIC_PATHS.has(p) || p.startsWith('/icons/');
 
 function safeEq(a, b) {
@@ -148,6 +151,23 @@ async function handleApi(req, res, url) {
   }
   if (p === '/api/config' && req.method === 'GET') {
     return json(res, 200, { demo: DEMO, greetingName: GREETING_NAME, uploads: !DEMO, maxPhotos: uploads.MAX_PER_ANSWER });
+  }
+  if (p === '/api/diag' && req.method === 'POST') {
+    const b = (await readBody(req, 4096)) || {};
+    if (DEMO) return send(res, 204, '', { 'Cache-Control': 'no-store' }); // demo visitors are anonymous; don't log them
+    const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : undefined);
+    const bool = (v) => (typeof v === 'boolean' ? v : undefined);
+    const line = {
+      at: new Date().toISOString(), ua: str(b.ua, 400), displayMode: str(b.displayMode, 20), bipFired: bool(b.bipFired),
+      swControlled: bool(b.swControlled), standalone: bool(b.standalone), ts: str(b.ts, 40), event: str(b.event, 40), outcome: str(b.outcome, 20),
+      installed: bool(b.installed), path: str(b.path, 40), via: str(req.headers['x-forwarded-proto'] ? 'tunnel' : 'direct', 10),
+    };
+    try {
+      fs.mkdirSync(path.dirname(DIAG_LOG), { recursive: true });
+      let size = 0; try { size = fs.statSync(DIAG_LOG).size; } catch {}
+      if (size < DIAG_MAX_BYTES) fs.appendFileSync(DIAG_LOG, JSON.stringify(line) + '\n');
+    } catch (e) { console.warn('diag log write failed:', e.message); }
+    return send(res, 204, '', { 'Cache-Control': 'no-store' });
   }
   if (DEMO) {
     // Demo: nothing a visitor does is persisted or shared with other visitors.

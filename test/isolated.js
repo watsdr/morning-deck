@@ -14,7 +14,7 @@ const live = +(fs.readFileSync(path.join(ROOT, '.env'), 'utf8').match(/^MD_PORT=
 if (!test) { console.error('usage: node test/isolated.js <test.js> [--empty] [--port N]'); process.exit(2); }
 if (port === live) { console.error(`refusing to use the live port ${live}`); process.exit(2); }
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'md-test-'));
-const env = { ...process.env, MD_DATA_DIR: dataDir, MD_PORT: String(port), MD_BASE: `http://127.0.0.1:${port}` };
+const env = { ...process.env, MD_DATA_DIR: dataDir, MD_PORT: String(port), MD_BASE: `http://127.0.0.1:${port}`, MD_DIAG_LOG: path.join(dataDir, 'diag.log') };
 const seed = args.includes('--empty') ? 'core.saveCards([]);core.saveAnswers([]);'
   : `const s=require('./scripts/sample-cards');const now=new Date();core.saveCards(s(now).map(r=>({...core.validateCard(r,now).card,status:'pending',receivedAt:now.toISOString()})));core.saveAnswers([]);`;
 const r = spawnSync(process.execPath, ['-e', `const core=require('./lib/core');if(!core.DATA_DIR.startsWith(${JSON.stringify(dataDir)}))throw new Error('wrong data dir');${seed}`], { cwd: ROOT, env, stdio: 'inherit' });

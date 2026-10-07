@@ -28,6 +28,9 @@
         <h1>Morning Deck</h1>
         <p id="greeting">Good morning</p>
       </div>
+      <button class="install-btn" id="installBtn" type="button" hidden aria-label="Install Morning Deck">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10m0 0-4-4m4 4 4-4M6 19h12"/></svg><span>Install app</span>
+      </button>
       <div class="counter" id="counter" aria-live="polite"><span id="countNum">0</span><small>left</small></div>
     </header>
     <div class="progress" aria-hidden="true"><div class="progress-fill" id="progressFill"></div></div>
@@ -79,6 +82,23 @@
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <div class="install-wrap" id="installWrap" hidden>
+    <div class="install-backdrop" id="installBackdrop"></div>
+    <section class="install-sheet" role="dialog" aria-modal="true" aria-labelledby="installTitle">
+      <div class="grabber" aria-hidden="true"></div>
+      <img class="install-icon" src="/icons/icon-192.png" width="56" height="56" alt="">
+      <h3 id="installTitle">Add Morning Deck to your home screen</h3>
+      <p class="install-sub">It opens full-screen, like an app. In Chrome on Android, use any one of these:</p>
+      <ol class="install-steps">
+        <li><span class="ico"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M12 8v6m0 0-2.5-2.5M12 14l2.5-2.5"/></svg></span><div>Tap the <b>Install</b> icon in the address bar</div></li>
+        <li><span class="ico"><b>⋮</b></span><div>Menu → <b>Install and create shortcut</b> or <b>Add to home screen</b></div></li>
+        <li><span class="ico"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.4M8.2 13.2l7.6 4.4"/></svg></span><div><b>Share</b> → <b>Add to home screen</b></div></li>
+      </ol>
+      <p class="install-note">Not seeing these options? You might be in another app's built-in browser. Tap ⋮ → <b>Open in Chrome</b>, then try again.</p>
+      <button class="install-done" id="installDone" type="button">Got it</button>
+    </section>
+  </div>
 
   <div class="sheet-wrap" id="sheetWrap" hidden>
     <div class="sheet-backdrop" id="sheetBackdrop"></div>
