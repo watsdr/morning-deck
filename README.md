@@ -3,6 +3,9 @@
 **▶ [Try the demo](https://watsdr.github.io/morning-deck/)**: runs entirely in your browser on example cards, and nothing is saved.
 Open it on your phone and swipe.
 
+**▶ [Morning Deck for Friends](https://watsdr.github.io/morning-deck/friends/)**: a free, private version anyone can use without a server.
+It builds your daily deck from weather, news, your calendar, tasks, mail and your own automations, right on your phone. See [below](#morning-deck-for-friends).
+
 One deck of swipe cards each morning with every question your bots have for you: swipe right/left/up/down to answer,
 triple-tap to reply with text or photos. Installable PWA (Android Chrome) + a tiny zero-dependency Node API with a JSON store.
 
@@ -67,6 +70,37 @@ the app swaps its fetch layer for an in-browser mock API. The deck comes from `d
 `scripts/sample-cards.js` plus the built-in feedback card. Answers and undo live in memory only, photos are off, and the Demo banner shows.
 All paths are relative, so it works under `/<repo>/`; the manifest and service worker are scoped to that subpath.
 Re-run the build after changing `public/` and commit `docs/`. Check it with `node test/pages-demo.js <pages-url>`.
+
+## Morning Deck for Friends
+
+A second static app at [`/friends/`](https://watsdr.github.io/morning-deck/friends/) for people who don't run a server or a bot.
+It **runs on each friend's phone, free and private**: settings, tokens, cards, answers and photos stay in that browser
+(localStorage + IndexedDB). There's no server, no account and no analytics. It reuses the same card UI (`public/app.js`): gestures,
+animations, fireworks, the reply sheet with photos, the install pill and the feedback card. A local engine answers the app's
+`/api/*` calls in the browser (`window.MD_API_FETCH`).
+
+* **First open:** a landing screen, then a sample deck (every card marked SAMPLE) right away, with no sign-up.
+* **Make it mine:** name, deck time (snoozed cards return then), gesture words, and a service picker. Each service has a connect step and a
+  **Test & preview** that renders real preview cards.
+* **Daily deck:** cards from connected services, sorted by priority and urgency, always ending with “How could Morning Deck be better?”.
+  That feedback is stored locally and can be shared via the phone's Share sheet or email. No address is hard-coded.
+* **Safety:** a swipe only records your decision on the phone. Per service, **Let swipes act** (off by default) allows simple
+  reversible actions only: complete a task, mark read or archive mail, RSVP. Each comes with Undo. It never sends messages, deletes or buys.
+* **Settings:** edit services, export/import settings (secrets excluded unless you tick the box), **Reset everything**, privacy note.
+
+| Works with no registration | Needs the owner's one-time OAuth registration | Coming soon |
+| --- | --- | --- |
+| Weather (Open-Meteo), News & RSS, My reminders, Calendar link (ICS), Todoist (API token), GitHub (token), Universal inbox (ntfy) | Google Calendar, Gmail, Google Tasks (GIS token model); Outlook mail and calendar, Microsoft To Do (MSAL.js SPA + PKCE) | Notion, Slack, Apple Reminders/Calendar, Spotify, WhatsApp, Strava, Trello, Asana, Linear, Jira, Discord, Instagram/X, Health Connect (each tile says why) |
+
+Third parties, disclosed in the app: feeds that block browsers (no CORS) are fetched through the free **rss2json.com** relay, which friends can
+switch off. The Universal inbox uses **ntfy.sh** with a random private topic: anyone with the topic can read it, messages are kept about
+12 hours, and they aren't end-to-end encrypted. Friends can self-host ntfy. Secret ICS links from Google, Outlook and iCloud usually can't be
+read by a browser app (no CORS), so the app says so and offers Google/Microsoft sign-in, an `.ics` import, or a relay you run yourself.
+
+Owner setup for Google and Microsoft sign-in: [docs/FRIENDS-OWNER-SETUP.md](docs/FRIENDS-OWNER-SETUP.md). The IDs go in `friends/config.js`.
+Source is in `friends/`. `node scripts/build-pages.js` builds `docs/friends/` (it copies `public/app.js`, `styles.css`, fonts and icons,
+and writes a scoped offline service worker). Test with `node test/friends.js <url-of-friends-app> [screenshot-dir]`
+(Playwright, 412×915. Weather and RSS are real. Token APIs, Google/Microsoft and ntfy are mocked.)
 
 ## Run
 
@@ -302,7 +336,12 @@ public/                 the PWA (index.html, styles.css, app.js, sw.js, manifest
 scripts/                start/stop/reset/init-env/phone-url, sample-cards.js, make-icons.js
 scripts/demo.sh         public demo instance (MD_DEMO=1, own data dir/env/port/quick tunnel)
 scripts/build-pages.js  builds docs/ (static GitHub Pages demo with the in-browser mock API)
-docs/                   generated static demo site (don't edit by hand)
+docs/                   generated static sites: demo at docs/, friends app at docs/friends/ (don't edit by hand; *.md guides are kept)
+docs/FRIENDS-OWNER-SETUP.md  one-time Google Cloud + Microsoft Entra registration for the friends app's sign-in
+friends/                Morning Deck for Friends source: index.html, friends.css, config.js (owner IDs), engine.js (local /api),
+                        services.js (Google/Microsoft auth, calendar cards), parsers.js (ICS, RSS), connectors-*.js, ui.js, ui-setup.js,
+                        auth/ms-redirect.html (MSAL bridge), vendor/msal/ (MSAL.js 5, MIT)
+test/friends.js         Playwright check of the friends app (+ test/friends-mocks.js)
 test/pages-demo.js      Playwright check of the static demo: 5 gestures, undo, feedback card last, cleared screen
 test/install.js         install flow check (real + simulated beforeinstallprompt, help sheet, /api/diag, SW auto-update)
 test/isolated.js        runs a test against a throwaway server (temp MD_DATA_DIR, port 8799, seeded SAMPLE deck)

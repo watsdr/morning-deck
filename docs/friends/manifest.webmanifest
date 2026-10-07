@@ -1,0 +1,19 @@
+{
+  "id": "/morning-deck/friends/",
+  "name": "Morning Deck",
+  "short_name": "Morning Deck",
+  "description": "Your day in one deck of swipe cards: weather, calendar, tasks, mail, news and your own automations. Free, private, runs on your phone.",
+  "start_url": "/morning-deck/friends/?source=pwa",
+  "scope": "/morning-deck/friends/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#1d1442",
+  "background_color": "#1d1442",
+  "categories": ["productivity", "utilities", "lifestyle"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

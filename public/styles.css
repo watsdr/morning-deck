@@ -565,3 +565,7 @@ textarea:focus { border-color: var(--tap3); box-shadow: 0 0 0 4px color-mix(in s
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .blob, .stars, .sunrise .rays { animation: none !important; }
 }
+
+/* optional link button in the reply sheet (card.link) */
+.sheet-link { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 2px; padding: 8px 14px; border-radius: 999px; font-weight: 700; font-size: 13.5px; text-decoration: none; color: #4b2fd6; background: #efeaff; }
+.sheet-link[hidden] { display: none; }

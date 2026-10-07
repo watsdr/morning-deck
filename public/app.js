@@ -4,7 +4,7 @@
 (() => {
   'use strict';
   const $ = (s, r = document) => r.querySelector(s);
-  const TZ = 'America/New_York';
+  const TZ = window.MD_TZ || 'America/New_York'; // the friends app sets the device's own time zone
   const DIRS = ['right', 'left', 'up', 'down'];
   const COLORS = { right: '#19c37d', left: '#ff4f6d', up: '#ffaa1f', down: '#8b7cf6', tap3: '#38b6ff', undo: '#b08b2e' };
   const ICONS = {
@@ -59,7 +59,7 @@
   async function loadConfig() {
     try {
       const c = await api('/api/config');
-      Object.assign(config, { demo: !!c.demo, uploads: c.uploads !== false, greetingName: c.greetingName || '' });
+      Object.assign(config, { demo: !!c.demo, uploads: c.uploads !== false, greetingName: c.greetingName || '', clearedNote: c.clearedNote || '', snoozeNote: c.snoozeNote });
       try { localStorage.setItem(NAME_KEY, config.greetingName); } catch (_) {}
     } catch (_) { /* older server or offline: keep cached values */ }
     greeting();
@@ -81,7 +81,9 @@
   // One code path: the app always talks to /api/*. Normally that's the server; in the static demo (GitHub Pages,
   // window.MD_STATIC_DEMO, or ?demo=static) an in-browser mock answers instead. Nothing else changes.
   const STATIC_DEMO = window.MD_STATIC_DEMO === true || /\.github\.io$/i.test(location.hostname) || new URLSearchParams(location.search).get('demo') === 'static';
-  const rawFetch = STATIC_DEMO ? mockApi() : (path, opts) => fetch(path, opts);
+  // window.MD_API_FETCH: a page can plug in its own /api/* implementation (the friends app answers from this browser's storage).
+  const LOCAL_API = typeof window.MD_API_FETCH === 'function';
+  const rawFetch = LOCAL_API ? window.MD_API_FETCH : STATIC_DEMO ? mockApi() : (path, opts) => fetch(path, opts);
   let inflight = 0; // API calls in progress; an app update waits for these before reloading
   const apiFetch = (path, opts) => { inflight++; return Promise.resolve().then(() => rawFetch(path, opts)).finally(() => { inflight--; }); };
   function mockApi() {
@@ -234,11 +236,11 @@
     if (card.sample) node.append(h('div', { class: 'ribbon', title: 'Example data, not a real request' }, 'SAMPLE'));
     node.append(h('header', { class: 'card-head' },
       h('div', { class: 'avatar' }, card.emoji || '🤖'),
-      h('div', { class: 'who' }, h('div', { class: 'bot' }, card.source), h('div', { class: 'meta' }, card.builtin ? 'Your daily check-in · last card' : fmtTime(card.createdAt) + (card.sample ? ' · sample' : '')))));
+      h('div', { class: 'who' }, h('div', { class: 'bot' }, card.source), h('div', { class: 'meta' }, card.builtin ? 'Your daily check-in · last card' : (card.meta || fmtTime(card.createdAt)) + (card.sample ? ' · sample' : '')))));
     node.append(card.builtin
       ? h('div', { class: 'chips' }, h('span', { class: 'chip' }, 'Feedback'), h('span', { class: 'chip chip-soft' }, '1 minute'))
       : h('div', { class: 'chips' },
-        h('span', { class: 'chip' }, TYPE_LABEL[card.type] || card.type),
+        h('span', { class: 'chip' }, card.chip || TYPE_LABEL[card.type] || card.type),
         h('span', { class: `chip prio-${card.priority}` }, card.priority === 'high' ? 'High priority' : card.priority === 'low' ? 'Low' : 'Normal')));
     node.append(h('h2', {}, card.title));
     if (card.body) node.append(h('p', { class: 'body' }, card.body));
@@ -335,7 +337,7 @@
     const list = state.session.length ? state.session.map((e) => ({ card: e.card, gesture: e.gesture, label: e.card.gestures[e.gesture].label, text: e.payload.text, pics: e.photos.length }))
       : (state.todayAnswers || []).map((a) => ({ card: { title: a.cardTitle, source: a.source, emoji: a.builtin ? '🌅' : '' }, gesture: a.gesture, label: a.label, text: a.text, pics: (a.attachments || []).length }));
     $('#clearedSub').textContent = list.length
-      ? `You cleared ${list.length} card${list.length > 1 ? 's' : ''}${state.session.length ? '' : ' today'}. ${config.demo ? 'This is a demo, so nothing was saved. Reload for a fresh deck.' : 'Your bots will pick up your answers.'}`
+      ? `You cleared ${list.length} card${list.length > 1 ? 's' : ''}${state.session.length ? '' : ' today'}. ${config.clearedNote || (config.demo ? 'This is a demo, so nothing was saved. Reload for a fresh deck.' : 'Your bots will pick up your answers.')}`
       : 'Nothing waiting on you right now. Enjoy your coffee ☕';
     const chips = $('#summaryChips'); chips.innerHTML = '';
     const snoozed = (x) => x.gesture === 'up' && (x.card.gestures ? x.card.gestures.up.snooze : x.label === 'Later');
@@ -581,6 +583,11 @@
     $('#sheetTitle').textContent = card.title;
     $('#sheetBody').textContent = card.body || '';
     $('#sheetDetails').textContent = card.details || '';
+    // optional card.link (http/https only): an "Open" button in the sheet
+    let link = $('#sheetLink');
+    if (!link) { link = h('a', { id: 'sheetLink', class: 'sheet-link', target: '_blank', rel: 'noopener noreferrer' }); $('#sheetDetails').after(link); }
+    const safeLink = typeof card.link === 'string' && /^https?:\/\//i.test(card.link) ? card.link : '';
+    link.hidden = !safeLink; link.href = safeLink || '#'; link.textContent = card.linkLabel || 'Open ↗';
     el.sheetScroll.scrollTop = 0;
     el.reply.value = text;
     clearPhotos();
@@ -779,7 +786,7 @@
     buzz(12);
     const pics = photos.length ? ` · ${photos.length} photo${photos.length > 1 ? 's' : ''}` : '';
     const label = gesture === 'tap3' ? (card.builtin ? 'Thanks! Suggestion saved' : 'Reply saved') : card.builtin && gesture === 'right' ? 'Love it · thanks!' : g.label;
-    toast(`${label}${card.builtin ? '' : ` · ${card.source}`}${pics}${gesture === 'up' ? ' · back tomorrow 6 AM' : ''}`, COLORS[gesture]);
+    toast(`${label}${card.builtin ? '' : ` · ${card.source}`}${pics}${gesture === 'up' && g.snooze !== false ? (config.snoozeNote != null ? config.snoozeNote : ' · back tomorrow 6 AM') : ''}`, COLORS[gesture]);
     entry.promise = (photos.length ? sendAnswer(payload, photos) : api('/api/answers', { method: 'POST', body: JSON.stringify(payload) }))
       .then((r) => { entry.answerId = r.answer.id; })
       .catch(async (e) => {
@@ -904,7 +911,8 @@
   el.reply.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveReply(); });
   document.addEventListener('keydown', (e) => {
     if (state.sheetCard) { if (e.key === 'Escape') closeSheet(); return; }
-    if (e.target.closest && e.target.closest('textarea,input')) return;
+    if (document.documentElement.hasAttribute('data-overlay')) return; // a page overlay (e.g. friends settings) has the keyboard
+    if (e.target.closest && e.target.closest('textarea,input,select')) return;
     const map = { ArrowRight: 'right', ArrowLeft: 'left', ArrowUp: 'up', ArrowDown: 'down' };
     if (map[e.key]) { e.preventDefault(); swipe(map[e.key]); }
     else if (e.key === 'Enter' || e.key === 'r') { e.preventDefault(); openSheet(state.deck[0]); }
@@ -924,7 +932,7 @@
   const isStandalone = () => displayMode() !== 'browser' || navigator.standalone === true;
   const install = { deferred: null, bipFired: false, installed: false };
   function diag(event, extra = {}) {
-    if (STATIC_DEMO) return; // no backend on the static demo
+    if (STATIC_DEMO || LOCAL_API) return; // no backend on the static demo or the friends app
     const body = { ua: navigator.userAgent, displayMode: displayMode(), bipFired: install.bipFired, swControlled: !!(navigator.serviceWorker && navigator.serviceWorker.controller),
       standalone: isStandalone(), installed: install.installed, ts: new Date().toISOString(), event, path: location.pathname, ...extra };
     fetch('/api/diag', { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
@@ -989,5 +997,5 @@
       document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
     }).catch((e) => console.warn('SW registration failed', e)));
   }
-  window.MorningDeck = { state, swipe, openSheet, undo, flushOutbox, syncViewport, confetti, install, diag }; // handy for debugging
+  window.MorningDeck = { state, swipe, openSheet, closeSheet, undo, flushOutbox, syncViewport, confetti, install, diag, loadDeck, loadConfig, toast, config, render }; // used by the friends UI; handy for debugging
 })();
