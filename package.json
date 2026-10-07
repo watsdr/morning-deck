@@ -1,0 +1,15 @@
+{
+  "name": "morning-deck",
+  "version": "0.2.0",
+  "description": "One deck of swipe cards each morning with every question your bots have for you. Installable PWA + zero-dependency Node API.",
+  "license": "MIT",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/isolated.js test/api.js --empty && node test/isolated.js test/e2e.js && node test/isolated.js test/e2e-photos.js"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.59.1"
+  }
+}
