@@ -1,5 +1,8 @@
 # Morning Deck
 
+**▶ [Try the demo](https://watsdr.github.io/morning-deck/)**: runs entirely in your browser on example cards, and nothing is saved.
+Open it on your phone and swipe.
+
 One deck of swipe cards each morning with every question your bots have for you: swipe right/left/up/down to answer,
 triple-tap to reply with text or photos. Installable PWA (Android Chrome) + a tiny zero-dependency Node API with a JSON store.
 
@@ -35,6 +38,25 @@ triple-tap to reply with text or photos. Installable PWA (Android Chrome) + a ti
 
    Each answer has `value` (e.g. `yes`/`no`/`skip`/`snooze`), optional `text` and photo `attachments`, and echoes your card's `replyTo`.
    See [Card intake format](#card-intake-format) and [API](#api).
+
+## Use it with a Grok Bot
+
+Morning Deck is a good inbox for a Grok Bot (or any assistant with a shell) and the other bots it works with:
+
+1. The bot clones this repo on its machine and runs `scripts/init-env.sh` then `scripts/start.sh`. The server needs only Node 18+.
+2. It exposes the server with a tunnel: `scripts/start.sh --tunnel` (Cloudflare quick tunnel) or Tailscale Funnel / a named tunnel for a
+   permanent URL. Then it sends you the phone link from `scripts/phone-url.sh` once. After that first visit, your phone stays signed in.
+3. Whenever any bot has a question for you, it `POST`s a card to `/api/cards` with the Bearer token. Each morning you swipe through the deck.
+4. The bots poll `GET /api/answers?source=<bot>&since=<time>` and act on your answers themselves. Morning Deck only records them.
+
+## Static demo (GitHub Pages)
+
+`node scripts/build-pages.js` builds `docs/`, a server-less copy of the app for GitHub Pages (Settings → Pages → *main* / */docs*).
+It's the same `public/app.js`. When the page is on `*.github.io`, sets `window.MD_STATIC_DEMO = true`, or is opened with `?demo=static`,
+the app swaps its fetch layer for an in-browser mock API. The deck comes from `docs/demo-deck.json`: the generic samples from
+`scripts/sample-cards.js` plus the built-in feedback card. Answers and undo live in memory only, photos are off, and the Demo banner shows.
+All paths are relative, so it works under `/<repo>/`; the manifest and service worker are scoped to that subpath.
+Re-run the build after changing `public/` and commit `docs/`. Check it with `node test/pages-demo.js <pages-url>`.
 
 ## Run
 
@@ -268,6 +290,9 @@ card.schema.json        intake JSON Schema
 public/                 the PWA (index.html, styles.css, app.js, sw.js, manifest.webmanifest, icons/, fonts/ Plus Jakarta Sans OFL)
 scripts/                start/stop/reset/init-env/phone-url, sample-cards.js, make-icons.js
 scripts/demo.sh         public demo instance (MD_DEMO=1, own data dir/env/port/quick tunnel)
+scripts/build-pages.js  builds docs/ (static GitHub Pages demo with the in-browser mock API)
+docs/                   generated static demo site (don't edit by hand)
+test/pages-demo.js      Playwright check of the static demo: 5 gestures, undo, feedback card last, cleared screen
 test/isolated.js        runs a test against a throwaway server (temp MD_DATA_DIR, port 8799, seeded SAMPLE deck)
 test/e2e.js             Playwright (system Chrome) touch-driven test, writes screenshots/ + verify.json
 test/e2e-photos.js      photos, offline queue, keyboard (resized + overlay visualViewport), feedback card, confetti; verify-photos.json
