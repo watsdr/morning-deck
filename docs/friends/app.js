@@ -270,11 +270,12 @@
       node.append(h('div', { class: `stamp stamp-${d}`, style: `--fs:${label.length > 11 ? 22 : label.length > 8 ? 26 : label.length > 5 ? 32 : 42}px` }, label));
     }
     node.append(h('div', { class: 'stamp stamp-tap3', style: '--fs:34px' }, card.builtin ? 'Thanks!' : 'Replied'));
-    node.addEventListener('pointerdown', onDown);
-    node.addEventListener('pointermove', onMove);
-    node.addEventListener('pointerup', onUp);
-    node.addEventListener('pointercancel', onCancel);
-    node.addEventListener('lostpointercapture', onCancel);
+    const P = { passive: true }; // nothing here calls preventDefault: touch-action:none on .card already owns the gesture
+    node.addEventListener('pointerdown', onDown, P);
+    node.addEventListener('pointermove', onMove, P);
+    node.addEventListener('pointerup', onUp, P);
+    node.addEventListener('pointercancel', onCancel, P);
+    node.addEventListener('lostpointercapture', onCancel, P);
     return node;
   }
   function skeleton() {
@@ -286,7 +287,14 @@
   }
 
   // ---------- render ----------
-  function render({ deal = false } = {}) {
+  // lazy (after a swipe): the hidden 4th card is built when the main thread is idle, not in the frame the card leaves.
+  let idleRender = 0;
+  function scheduleIdleRender() {
+    if (idleRender) return;
+    const run = () => { idleRender = 0; if (drag || state.busy) return scheduleIdleRender(); render(); };
+    idleRender = window.requestIdleCallback ? requestIdleCallback(run, { timeout: 700 }) : setTimeout(run, 250);
+  }
+  function render({ deal = false, lazy = false } = {}) {
     if (state.locked) return;
     const visible = state.deck.slice(0, 4);
     const existing = new Map([...el.stack.children].filter((n) => n.dataset.id && !n.classList.contains('flying')).map((n) => [n.dataset.id, n]));
@@ -295,11 +303,12 @@
       let node = existing.get(card.id);
       existing.delete(card.id);
       const fresh = !node;
+      if (fresh && lazy && i >= 3) { scheduleIdleRender(); return; }
       if (fresh) {
         node = buildCard(card);
         node.dataset.depth = '3'; node.style.setProperty('--depth', 3);
         el.stack.appendChild(node);
-        node.getBoundingClientRect();
+        if (i < 3 && !deal) node.getBoundingClientRect(); // let it rise from the back (only first load / undo, never mid-swipe)
       }
       node.classList.remove('dragging');
       node.style.transform = ''; node.style.opacity = '';
@@ -312,18 +321,24 @@
     // labels on fallback buttons
     const g = state.deck[0]?.gestures;
     for (const d of DIRS) {
-      const btn = document.querySelector(`.act[data-g="${d}"]`);
-      btn.querySelector('span').textContent = g ? g[d].label : { right: 'Yes', left: 'No', up: 'Later', down: 'Skip' }[d];
+      const btn = document.querySelector(`.act[data-g="${d}"]`), sp = btn.querySelector('span');
+      const lbl = g ? g[d].label : { right: 'Yes', left: 'No', up: 'Later', down: 'Skip' }[d];
+      if (sp.textContent !== lbl) sp.textContent = lbl; // write only on change: no relayout of the bar per swipe
       btn.disabled = !g || !!g[d].disabled;
     }
     const t3 = document.querySelector('.act-tap3');
-    t3.disabled = !g; t3.querySelector('span').textContent = (g && g.tap3 && g.tap3.label) || 'Reply';
+    const t3l = (g && g.tap3 && g.tap3.label) || 'Reply', t3s = t3.querySelector('span');
+    t3.disabled = !g; if (t3s.textContent !== t3l) t3s.textContent = t3l;
     el.undo.disabled = !state.history.length;
     // counters
     const n = state.deck.length;
-    if (el.count.textContent !== String(n)) { el.count.textContent = n; el.counter.classList.remove('bump'); void el.counter.offsetWidth; el.counter.classList.add('bump'); }
+    if (el.count.textContent !== String(n)) {
+      el.count.textContent = n;
+      if (!reduced() && el.count.animate) el.count.animate([{ scale: 1 }, { scale: 1.35, offset: 0.4 }, { scale: 1 }], { duration: 450, easing: 'cubic-bezier(.2, 1.35, .35, 1)' }); // compositor bump, no forced reflow
+    }
     const done = state.session.length;
-    el.progress.style.width = done + n ? `${(done / (done + n)) * 100}%` : (state.loaded ? '100%' : '0%');
+    const frac = done + n ? done / (done + n) : (state.loaded ? 1 : 0);
+    el.progress.style.transform = `translateX(${((frac - 1) * 100).toFixed(2)}%)`; // transform, not width: no layout per frame
     // cleared / loading
     if (!state.loaded) { el.stack.append(skeleton()); el.cleared.hidden = true; return; }
     const isCleared = n === 0;
@@ -363,52 +378,94 @@
   }
 
   // ---------- drag physics ----------
+  // Pointer Events feed ONE requestAnimationFrame writer: pointermove only records the latest point (no DOM reads or
+  // writes), and the frame callback writes transform/opacity, skipping any value that hasn't changed. The card size is
+  // measured once per gesture (pointerdown), never per move. Fly-outs run on the compositor (Web Animations), so the
+  // answer being recorded and the next card being prepared on the main thread can't stall them.
   let drag = null;
   let topAnim = null;
+  let frameReq = 0;
+  let cardSize = null; // {w, h} of a card; all cards share the stack's box. Reset on resize.
+  window.addEventListener('resize', () => { cardSize = null; }, { passive: true });
+  const sizeOf = (node) => cardSize || (cardSize = { w: node.offsetWidth || 1, h: node.offsetHeight || 1 });
   const rubber = (d, limit) => { const a = Math.abs(d); return a <= limit ? d : Math.sign(d) * (limit + (a - limit) * 0.35); };
-  function intent(node, dx, dy) {
-    const w = node.offsetWidth, hgt = node.offsetHeight;
+  function intentFor(dx, dy, w, hgt) {
     const px = Math.abs(dx) / (w * 0.32), py = Math.abs(dy) / (hgt * 0.2);
     if (Math.max(px, py) < 0.06) return { dir: null, p: 0 };
     return px >= py ? { dir: dx > 0 ? 'right' : 'left', p: px } : { dir: dy < 0 ? 'up' : 'down', p: py };
   }
+  const intent = (node, dx, dy) => { const s = sizeOf(node); return intentFor(dx, dy, s.w, s.h); };
   function topCardData(node) { return state.deck.find((c) => c.id === node.dataset.id); }
+  const actBtn = Object.fromEntries(DIRS.map((d) => [d, document.querySelector(`.act[data-g="${d}"]`)]));
+  const actionsBar = $('#actions');
+  // "live" = a finger or a gesture animation is driving the UI: the tint and button scale follow 1:1 (no CSS transition
+  // restarted on every frame) and the slow background drift holds still, so every frame goes to the card. When it ends
+  // they ease back with their normal transitions.
+  let isLive = false;
+  const bgLoops = [...document.querySelectorAll('.sky .blob, .sky .stars')];
+  const live = (on) => {
+    if (isLive === on) return; isLive = on;
+    actionsBar.classList.toggle('live', on);
+    el.tint.style.transition = on ? 'none' : '';
+    for (const b of bgLoops) b.style.animationPlayState = on ? 'paused' : '';
+  };
+
+  // element refs per card, collected once (buildCard) instead of querySelectorAll on every move
+  function fxOf(node) {
+    if (node._fx) return node._fx;
+    const fx = { stamps: {}, hints: {}, wash: node.querySelector('.card-wash'), ring: node.querySelector('.card-ring'), last: restingFx() };
+    for (const s of node.querySelectorAll('.stamp')) fx.stamps[s.className.match(/stamp-(\w+)/)[1]] = s;
+    for (const hn of node.querySelectorAll('.hint')) fx.hints[hn.className.match(/hint-(\w+)/)[1]] = hn;
+    return (node._fx = fx);
+  }
+  // what a card at rest looks like (CSS defaults): only values that differ from this get written
+  const restingFx = () => ({ hint: null, cdir: null, a: 0, bdir: null, bs: 0, rise: 0 });
+  const behindOf = (node) => [...el.stack.children].filter((n) => n !== node && n.dataset.id && !n.classList.contains('flying') && +n.dataset.depth > 0);
+  const r3 = (v) => Math.round(v * 1000) / 1000;
 
   function setFeedback(node, dir, p) {
-    const q = clamp(p);
-    const card = topCardData(node);
-    for (const s of node.querySelectorAll('.stamp')) {
-      const d = s.className.match(/stamp-(\w+)/)[1];
-      const on = d === dir;
-      const o = on ? clamp((p - 0.12) / 0.6) : 0;
-      s.style.opacity = o;
-      s.style.setProperty('--s', on ? (1.35 - 0.35 * clamp((p - 0.12) / 0.6)).toFixed(3) : 1);
+    const fx = fxOf(node), last = fx.last;
+    const q = clamp(p), qr = Math.round(q * 100) / 100;
+    if (last.card === undefined) last.card = topCardData(node) || null;
+    const card = last.card;
+    const k = clamp((p - 0.12) / 0.6);
+    for (const d in fx.stamps) {
+      const s = fx.stamps[d], on = d === dir;
+      const o = on ? r3(k) : 0, sc = on ? r3(1.35 - 0.35 * k) : 1;
+      if ((s._o ?? 0) !== o) { s.style.opacity = o; s._o = o; }
+      if ((s._s ?? 1) !== sc) { s.style.scale = sc; s._s = sc; } // individual 'scale' property: no inherited custom property, no subtree restyle
     }
-    for (const hn of node.querySelectorAll('.hint')) hn.classList.toggle('active', !!dir && hn.classList.contains(`hint-${dir}`) && p > 0.15);
-    const wash = node.querySelector('.card-wash'), ring = node.querySelector('.card-ring');
-    if (dir && card && !(card.gestures[dir] || {}).disabled) {
-      const c = COLORS[dir];
-      const to = { right: 'to right', left: 'to left', up: 'to top', down: 'to bottom' }[dir] || 'to bottom';
-      wash.style.background = `linear-gradient(${to}, transparent 25%, ${rgba(c, 0.32)} 100%)`;
-      wash.style.opacity = q;
-      ring.style.setProperty('--glow', rgba(c, 0.85)); ring.style.opacity = q;
-      node.style.boxShadow = `0 1px 0 rgba(255,255,255,.9) inset, 0 0 ${30 + 40 * q}px ${rgba(c, 0.55 * q)}, 0 30px 60px -18px rgba(14,6,48,.55)`;
-      el.tint.style.setProperty('--tint', rgba(c, 0.55)); el.tint.style.opacity = q * 0.8;
-    } else {
-      wash.style.opacity = 0; ring.style.opacity = 0; node.style.boxShadow = ''; el.tint.style.opacity = 0;
+    const hintOn = dir && p > 0.15 ? dir : null;
+    if (last.hint !== hintOn) { for (const d in fx.hints) fx.hints[d].classList.toggle('active', d === hintOn); last.hint = hintOn; }
+    const cdir = dir && card && !(card.gestures[dir] || {}).disabled ? dir : null;
+    if (last.cdir !== cdir) {
+      if (cdir) {
+        const c = COLORS[cdir];
+        const to = { right: 'to right', left: 'to left', up: 'to top', down: 'to bottom' }[cdir];
+        fx.wash.style.background = `linear-gradient(${to}, transparent 25%, ${rgba(c, 0.32)} 100%)`;
+        fx.ring.style.setProperty('--glow', rgba(c, 0.85));
+        el.tint.style.setProperty('--tint', rgba(c, 0.55));
+      }
+      last.cdir = cdir;
     }
-    for (const d of DIRS) {
-      const b = document.querySelector(`.act[data-g="${d}"]`);
-      b.style.transform = d === dir ? `scale(${1 + 0.18 * q})` : '';
+    const a = cdir ? qr : 0;
+    if (last.a !== a) { fx.wash.style.opacity = a; fx.ring.style.opacity = a; el.tint.style.opacity = r3(a * 0.8); last.a = a; }
+    const bs = dir ? qr : 0;
+    if (last.bdir !== dir || last.bs !== bs) {
+      for (const d of DIRS) { const t = d === dir ? `scale(${r3(1 + 0.18 * bs)})` : ''; if ((actBtn[d]._t ?? '') !== t) { actBtn[d].style.transform = t; actBtn[d]._t = t; } }
+      last.bdir = dir; last.bs = bs;
     }
-    // cards behind rise as the top card leaves
-    const behind = [...el.stack.querySelectorAll('.card:not(.flying)')].filter((n) => n !== node);
-    for (const b of behind) {
-      const depth = +b.dataset.depth; if (!depth) continue;
-      const eff = depth - (dir ? q * 0.6 : 0);
-      b.classList.toggle('dragging', q > 0);
-      b.style.transform = q > 0 ? `translate3d(0, ${eff * 15}px, 0) scale(${1 - eff * 0.05})` : '';
-      if (depth === 3) b.style.opacity = q > 0 ? q * 0.6 : '';
+    // cards behind rise as the top card leaves (transform/opacity only)
+    const rise = dir ? qr : 0;
+    if (last.rise !== rise) {
+      for (const b of (fx.behind || (fx.behind = behindOf(node)))) {
+        const depth = +b.dataset.depth; if (!depth) continue;
+        const eff = depth - rise * 0.6;
+        b.classList.toggle('dragging', q > 0);
+        b.style.transform = q > 0 ? `translate3d(0, ${r3(eff * 15)}px, 0) scale(${r3(1 - eff * 0.05)})` : '';
+        if (depth === 3) b.style.opacity = q > 0 ? r3(q * 0.6) : '';
+      }
+      last.rise = rise;
     }
     if (dir && p >= 1 && !node._armed) { node._armed = true; buzz(8); } else if (p < 1) node._armed = false;
   }
@@ -416,53 +473,89 @@
     setFeedback(node, null, 0);
     node.style.boxShadow = '';
     for (const b of el.stack.querySelectorAll('.card')) if (b !== node) { b.classList.remove('dragging'); b.style.transform = ''; b.style.opacity = ''; }
+    el.tint.style.opacity = 0;
+    const fx = fxOf(node); fx.behind = null; fx.last = restingFx();
   }
-  function place(node, x, y, rot) { node.style.transform = `translate3d(${x}px, ${y}px, 0) rotate(${rot}deg)`; }
+  function place(node, x, y, rot) { node.style.transform = `translate3d(${r3(x)}px, ${r3(y)}px, 0) rotate(${r3(rot)}deg)`; }
+  // mid-animation the DOM isn't at rest, so the first frame rewrites everything; at rest only changes are written
+  function resetFx(node) { const fx = fxOf(node); fx.last = node._pos ? {} : restingFx(); fx.behind = behindOf(node); }
 
   function onDown(e) {
     const node = e.currentTarget;
     if (node.dataset.depth !== '0' || node.classList.contains('flying') || state.busy || state.sheetCard) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (topAnim) { topAnim.cancel(); topAnim = null; }
-    node.setPointerCapture(e.pointerId);
-    const r = node.getBoundingClientRect();
+    try { node.setPointerCapture(e.pointerId); } catch (_) {}
+    const r = node.getBoundingClientRect(); // the one layout read per gesture
+    const s = sizeOf(node);
     const now = e.timeStamp || performance.now();
     const cur = node._pos || { x: 0, y: 0 };
-    drag = { node, id: e.pointerId, x0: e.clientX - cur.x, y0: e.clientY - cur.y, sx: e.clientX, sy: e.clientY, t0: now, x: cur.x, y: cur.y, rot: 0, moved: false,
-      samples: [{ x: e.clientX, y: e.clientY, t: now }], sign: (e.clientY - r.top) > r.height * 0.55 ? -1 : 1, w: r.width, h: r.height };
+    drag = { node, id: e.pointerId, x0: e.clientX - cur.x, y0: e.clientY - cur.y, sx: e.clientX, sy: e.clientY, px: e.clientX, py: e.clientY, t0: now, x: cur.x, y: cur.y, rot: 0, moved: false,
+      samples: [{ x: e.clientX, y: e.clientY, t: now }], sign: (e.clientY - r.top) > r.height * 0.55 ? -1 : 1, w: s.w, h: s.h, rect: r };
+    resetFx(node);
     node.classList.add('dragging');
   }
   function onMove(e) {
     if (!drag || e.pointerId !== drag.id) return;
-    const now = e.timeStamp || performance.now();
+    if (!drag.live) { drag.live = true; live(true); } // taps never toggle it
+    const pts = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
+    for (const c of (pts.length ? pts : [e])) drag.samples.push({ x: c.clientX, y: c.clientY, t: c.timeStamp || e.timeStamp || performance.now() });
+    const now = drag.samples[drag.samples.length - 1].t;
+    while (drag.samples.length > 2 && now - drag.samples[0].t > 100) drag.samples.shift();
+    drag.px = e.clientX; drag.py = e.clientY;
     if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 9) drag.moved = true;
-    if (!drag.moved) return;
-    drag.samples.push({ x: e.clientX, y: e.clientY, t: now });
-    while (drag.samples.length > 2 && now - drag.samples[0].t > 110) drag.samples.shift();
-    const rx = rubber(e.clientX - drag.x0, drag.w * 0.85), ry = rubber(e.clientY - drag.y0, drag.h * 0.42);
-    drag.x = rx; drag.y = ry; drag.rot = (rx / drag.w) * 17 * drag.sign;
-    place(drag.node, rx, ry, drag.rot);
-    drag.node._pos = { x: rx, y: ry };
-    const it = intent(drag.node, rx, ry);
-    setFeedback(drag.node, it.dir, it.p);
+    if (!frameReq) frameReq = requestAnimationFrame(dragFrame); // the card follows from the first pixel (no dead zone)
   }
-  function velocity(samples) {
+  function follow(d) {
+    const rx = rubber(d.px - d.x0, d.w * 0.85), ry = rubber(d.py - d.y0, d.h * 0.42);
+    d.x = rx; d.y = ry; d.rot = (rx / d.w) * 17 * d.sign;
+  }
+  function dragFrame() {
+    frameReq = 0;
+    const d = drag; if (!d) return;
+    follow(d);
+    place(d.node, d.x, d.y, d.rot);
+    d.node._pos = { x: d.x, y: d.y };
+    const it = intentFor(d.x, d.y, d.w, d.h);
+    setFeedback(d.node, it.dir, it.p);
+  }
+  // px per ms over the last ~90 ms; a finger that stopped before lifting has no velocity
+  function velocity(samples, upT) {
     if (samples.length < 2) return { x: 0, y: 0 };
-    const a = samples[0], b = samples[samples.length - 1];
+    const b = samples[samples.length - 1];
+    if (upT && upT - b.t > 80) return { x: 0, y: 0 };
+    let a = samples[0];
+    for (const s of samples) { if (b.t - s.t <= 90) { a = s; break; } }
+    if (a === b) a = samples[samples.length - 2];
     const dt = Math.max(1, b.t - a.t);
-    return { x: (b.x - a.x) / dt, y: (b.y - a.y) / dt }; // px per ms
+    return { x: (b.x - a.x) / dt, y: (b.y - a.y) / dt };
   }
   function onUp(e) {
     if (!drag || e.pointerId !== drag.id) return;
     const d = drag; drag = null;
+    if (frameReq) { cancelAnimationFrame(frameReq); frameReq = 0; }
     try { d.node.releasePointerCapture(e.pointerId); } catch (_) {}
-    if (!d.moved && (e.timeStamp || performance.now()) - d.t0 < 400) { d.node.classList.remove('dragging'); d.node._pos = null; d.node.style.transform = ''; return handleTap(e, d.node); }
-    const v = velocity(d.samples);
-    const it = intent(d.node, d.x, d.y);
+    const upT = e.timeStamp || performance.now();
+    if (!d.moved && upT - d.t0 < 400) {
+      d.node.classList.remove('dragging'); d.node._pos = null; d.node.style.transform = ''; clearFeedback(d.node); live(false);
+      return handleTap(e, d.node, d.rect);
+    }
+    follow(d);
+    const v = velocity(d.samples, upT);
+    const it = intentFor(d.x, d.y, d.w, d.h);
     let dir = null;
     if (it.dir && it.p >= 1) dir = it.dir;
-    else if (Math.abs(v.x) >= Math.abs(v.y)) { if (Math.abs(v.x) > 0.45 && Math.abs(d.x) > 36 && Math.sign(v.x) === Math.sign(d.x)) dir = d.x > 0 ? 'right' : 'left'; }
-    else if (Math.abs(v.y) > 0.45 && Math.abs(d.y) > 36 && Math.sign(v.y) === Math.sign(d.y)) dir = d.y < 0 ? 'up' : 'down';
+    else {
+      const ax = Math.abs(v.x) >= Math.abs(v.y);
+      const vel = ax ? v.x : v.y, disp = ax ? d.x : d.y, speed = Math.abs(vel);
+      const way = ax ? (d.x > 0 ? 'right' : 'left') : (d.y < 0 ? 'up' : 'down');
+      if (speed > 0.4 && Math.abs(disp) > 28 && Math.sign(vel) === Math.sign(disp)) dir = way; // quick flick
+      else if (speed > 0.25 && Math.sign(vel) === Math.sign(disp)) {
+        // momentum: where the card would coast in ~140 ms; past the threshold counts, like a native swipe
+        const pj = intentFor(d.x + v.x * 140, d.y + v.y * 140, d.w, d.h);
+        if (pj.dir === way && pj.p >= 1) dir = way;
+      }
+    }
     state.lastRelease = { v, x: d.x, y: d.y, p: it.p, dir, n: d.samples.length, span: d.samples.length > 1 ? d.samples[d.samples.length - 1].t - d.samples[0].t : 0 };
     const card = topCardData(d.node);
     const g = dir && card ? card.gestures[dir] || {} : {};
@@ -473,32 +566,52 @@
   function onCancel(e) {
     if (!drag || e.pointerId !== drag.id) return;
     const d = drag; drag = null;
+    if (frameReq) { cancelAnimationFrame(frameReq); frameReq = 0; }
     springBack(d.node, { x: d.x, y: d.y, rot: d.rot }, { x: 0, y: 0 });
   }
 
   function animate(step) {
     let raf, last = performance.now(), stopped = false;
-    const loop = (t) => { if (stopped) return; const dt = Math.min(0.032, (t - last) / 1000); last = t; if (step(dt) === false) return; raf = requestAnimationFrame(loop); };
+    const loop = (t) => { if (stopped) return; const dt = Math.min(0.032, Math.max(0, (t - last) / 1000)); last = t; if (step(dt, t) === false) return; raf = requestAnimationFrame(loop); };
     raf = requestAnimationFrame(loop);
     return { cancel() { stopped = true; cancelAnimationFrame(raf); } };
   }
+  // Damped spring solved exactly (frame-rate independent: identical at 60, 90 or 120 Hz). zeta ~0.83: snappy, tiny overshoot.
+  const SPRING_K = 640, SPRING_C = 42;
+  function springAxis(x0, v0) {
+    const w0 = Math.sqrt(SPRING_K), z = SPRING_C / (2 * w0), wd = w0 * Math.sqrt(1 - z * z), B = (v0 + z * w0 * x0) / wd;
+    return (t) => { const e = Math.exp(-z * w0 * t), c = Math.cos(wd * t), s = Math.sin(wd * t); return [e * (x0 * c + B * s), e * ((B * wd - z * w0 * x0) * c - (x0 * wd + z * w0 * B) * s)]; };
+  }
   function springBack(node, from, v) {
     node.classList.add('dragging');
-    if (reduced()) { node._pos = null; node.style.transform = ''; node.classList.remove('dragging'); clearFeedback(node); return; }
-    let x = from.x, y = from.y, r = from.rot, vx = v.x * 1000, vy = v.y * 1000, vr = 0;
-    const k = 380, c = 24;
-    topAnim = animate((dt) => {
-      vx += (-k * x - c * vx) * dt; x += vx * dt;
-      vy += (-k * y - c * vy) * dt; y += vy * dt;
-      vr += (-k * r - c * vr) * dt; r += vr * dt;
+    if (reduced()) { node._pos = null; node.style.transform = ''; node.classList.remove('dragging'); clearFeedback(node); if (!drag) live(false); return; }
+    resetFx(node);
+    live(true);
+    const sx = springAxis(from.x, v.x * 1000), sy = springAxis(from.y, v.y * 1000), sr = springAxis(from.rot, 0);
+    const s = sizeOf(node);
+    const t0 = performance.now();
+    const anim = animate((dt, now) => {
+      const t = Math.max(0, (now - t0) / 1000);
+      const [x, vx] = sx(t), [y, vy] = sy(t), [r] = sr(t);
       place(node, x, y, r); node._pos = { x, y };
-      const it = intent(node, x, y); setFeedback(node, it.dir, it.p);
-      if (Math.abs(x) < 0.4 && Math.abs(y) < 0.4 && Math.abs(vx) + Math.abs(vy) < 12) {
-        node._pos = null; node.style.transform = ''; node.classList.remove('dragging'); clearFeedback(node); topAnim = null; return false;
+      const it = intentFor(x, y, s.w, s.h); setFeedback(node, it.dir, it.p);
+      if ((Math.abs(x) < 0.4 && Math.abs(y) < 0.4 && Math.abs(vx) + Math.abs(vy) < 12) || t > 1.5) {
+        node._pos = null; node.style.transform = ''; node.classList.remove('dragging'); clearFeedback(node); if (topAnim === anim) topAnim = null; if (!drag) live(false); return false;
       }
     });
+    topAnim = anim;
   }
 
+  // Run fn right after the next frame is produced (so an animation that was just started gets on screen first).
+  // A timer backs it up in case frames aren't being produced (hidden tab), so an answer is never held back.
+  let pendingCommits = 0;
+  function afterFrame(fn) {
+    pendingCommits++;
+    let ran = false;
+    const run = () => { if (ran) return; ran = true; pendingCommits--; fn(); };
+    requestAnimationFrame(() => setTimeout(run, 0));
+    setTimeout(run, 150);
+  }
   function flyOut(node, dir, from, v, opts = {}) {
     const card = topCardData(node);
     if (!card) return;
@@ -509,19 +622,33 @@
     const W = window.innerWidth, H = window.innerHeight;
     const axisX = dir === 'right' || dir === 'left';
     const sgn = dir === 'right' || dir === 'down' ? 1 : -1;
-    const along = Math.max(Math.abs(axisX ? v.x : v.y) * 1000, 2300);
+    const along = Math.max(Math.abs(axisX ? v.x : v.y) * 1000, 2600);
     let vx = axisX ? sgn * along : v.x * 600;
     let vy = axisX ? v.y * 600 : sgn * along;
     const vr = axisX ? sgn * 70 : (x >= 0 ? 1 : -1) * 18;
-    commit(card, dir, opts.text, opts.photos);
-    const finish = () => { node.remove(); el.tint.style.opacity = 0; for (const b of document.querySelectorAll('.act')) b.style.transform = ''; };
-    if (reduced()) { node.style.transition = 'opacity .15s'; node.style.opacity = 0; setTimeout(finish, 160); return; }
-    animate((dt) => {
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      node.remove();
+      if (drag) { const fx = fxOf(drag.node); fx.last.a = fx.last.bs = undefined; return; } // the card being dragged now owns tint + buttons
+      el.tint.style.opacity = 0;
+      for (const d of DIRS) { actBtn[d].style.transform = ''; actBtn[d]._t = ''; }
+      if (!topAnim) live(false);
+    };
+    if (reduced()) { commit(card, dir, opts.text, opts.photos); node.style.transition = 'opacity .15s'; node.style.opacity = 0; setTimeout(finish, 160); return; }
+    // Same physics as before, pre-computed into keyframes at 120 Hz and handed to the compositor.
+    const kf = [{ transform: `translate3d(${r3(x)}px, ${r3(y)}px, 0) rotate(${r3(r)}deg)` }];
+    const dt = 1 / 120; let t = 0;
+    while (t < 1) {
       vx *= 1 + dt * 1.5; vy *= 1 + dt * 1.5;
-      x += vx * dt; y += vy * dt; r += vr * dt;
-      place(node, x, y, r);
-      if (Math.abs(x) > W + 120 || Math.abs(y) > H + 160) { finish(); return false; }
-    });
+      x += vx * dt; y += vy * dt; r += vr * dt; t += dt;
+      kf.push({ transform: `translate3d(${r3(x)}px, ${r3(y)}px, 0) rotate(${r3(r)}deg)` });
+      if (Math.abs(x) > W + 120 || Math.abs(y) > H + 160) break;
+    }
+    const anim = node.animate(kf, { duration: Math.round(t * 1000), easing: 'linear', fill: 'forwards' });
+    anim.onfinish = finish;
+    setTimeout(finish, t * 1000 + 600); // safety net (e.g. a background tab)
+    afterFrame(() => commit(card, dir, opts.text, opts.photos)); // motion first, then record (optimistic; network syncs after)
   }
 
   // programmatic swipe (buttons / keyboard / sheet quick answers)
@@ -533,11 +660,14 @@
     flash(dir);
     if (reduced()) return flyOut(node, dir, { x: 0, y: 0, rot: 0 }, { x: 0, y: 0 }, opts);
     state.busy = true;
+    if (topAnim) { topAnim.cancel(); topAnim = null; }
     node.classList.add('dragging');
-    const w = node.offsetWidth, hh = node.offsetHeight;
+    resetFx(node);
+    live(true);
+    const { w, h: hh } = sizeOf(node);
     const tx = dir === 'right' ? w * 0.42 : dir === 'left' ? -w * 0.42 : 0;
     const ty = dir === 'down' ? hh * 0.26 : dir === 'up' ? -hh * 0.26 : 0;
-    let t = 0; const T = 0.2;
+    let t = 0; const T = 0.15;
     animate((dt) => {
       t = Math.min(T, t + dt); const e = 1 - Math.pow(1 - t / T, 3);
       const x = tx * e, y = ty * e, rot = (x / w) * 17;
@@ -550,17 +680,25 @@
       }
     });
   }
-  function flash(dir) { const b = document.querySelector(`.act[data-g="${dir}"]`); if (!b) return; b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); }
+  // compositor-only "press" pulse (no forced reflow to restart a CSS animation)
+  function flash(dir) {
+    const b = actBtn[dir]; if (!b || reduced() || !b.animate) return;
+    b.animate([{ scale: 1 }, { scale: 1.18, offset: 0.3 }, { scale: 1 }], { duration: 420, easing: 'cubic-bezier(.2, 1.35, .35, 1)' });
+  }
 
   // ---------- triple tap ----------
+  // Every tap is handled the moment the finger lifts (ripple + dot right away); nothing waits to see if more taps follow.
   let tapTimer;
-  function handleTap(e, node) {
+  function handleTap(e, node, rect) {
     const now = performance.now();
     state.taps = state.taps.filter((t) => now - t < 700);
     state.taps.push(now);
-    const r = node.getBoundingClientRect();
-    if (!reduced()) { const rp = h('div', { class: 'tap-ripple', style: `left:${e.clientX - r.left}px;top:${e.clientY - r.top}px` }); node.append(rp); setTimeout(() => rp.remove(), 520); }
-    const dots = node.querySelectorAll('.tap-hint .dots i');
+    const fx = fxOf(node);
+    if (!reduced()) {
+      const r = rect || node.getBoundingClientRect();
+      const rp = h('div', { class: 'tap-ripple', style: `left:${Math.round(e.clientX - r.left)}px;top:${Math.round(e.clientY - r.top)}px` }); node.append(rp); setTimeout(() => rp.remove(), 520);
+    }
+    const dots = fx.dots || (fx.dots = node.querySelectorAll('.tap-hint .dots i'));
     dots.forEach((d, i) => d.classList.toggle('on', i < state.taps.length));
     clearTimeout(tapTimer);
     tapTimer = setTimeout(() => { state.taps = []; dots.forEach((d) => d.classList.remove('on')); }, 720);
@@ -653,7 +791,7 @@
     if (!node) return commit(card, 'tap3', text, photos);
     node.classList.add('flying');
     node.style.pointerEvents = 'none';
-    const stamp = node.querySelector('.stamp-tap3'); stamp.style.opacity = 1; stamp.style.setProperty('--s', 1);
+    const stamp = node.querySelector('.stamp-tap3'); stamp.style.opacity = 1; stamp.style.scale = 1;
     const ring = node.querySelector('.card-ring'); ring.style.setProperty('--glow', rgba(COLORS.tap3, 0.9)); ring.style.opacity = 1;
     node.style.boxShadow = `0 0 60px ${rgba(COLORS.tap3, 0.6)}`;
     commit(card, 'tap3', text, photos);
@@ -787,7 +925,11 @@
     const pics = photos.length ? ` · ${photos.length} photo${photos.length > 1 ? 's' : ''}` : '';
     const label = gesture === 'tap3' ? (card.builtin ? 'Thanks! Suggestion saved' : 'Reply saved') : card.builtin && gesture === 'right' ? 'Love it · thanks!' : g.label;
     toast(`${label}${card.builtin ? '' : ` · ${card.source}`}${pics}${gesture === 'up' && g.snooze !== false ? (config.snoozeNote != null ? config.snoozeNote : ' · back tomorrow 6 AM') : ''}`, COLORS[gesture]);
-    entry.promise = (photos.length ? sendAnswer(payload, photos) : api('/api/answers', { method: 'POST', body: JSON.stringify(payload) }))
+    // Optimistic: the card is already gone on screen; the network catches up. If this card's undo is still syncing,
+    // wait for it so the server sees undo -> new answer in order.
+    const send = () => (photos.length ? sendAnswer(payload, photos) : api('/api/answers', { method: 'POST', body: JSON.stringify(payload) }));
+    const after = syncChain.get(card.id);
+    entry.promise = (after ? after.then(send, send) : send())
       .then((r) => { entry.answerId = r.answer.id; })
       .catch(async (e) => {
         if (e.status === 401) return;
@@ -815,22 +957,27 @@
         render();
         if (!state.sheetCard) openSheet(card, { gesture, text: text || '', photos });
       });
-    render();
+    render({ lazy: true });
     if (!state.deck.length) setTimeout(() => { if (!state.deck.length) renderCleared(true); }, 260);
   }
 
-  async function undo() {
-    const entry = state.history.pop();
-    if (!entry) return;
-    el.undo.disabled = true;
+  // Optimistic undo: the card comes back immediately; the server is told afterwards (in order, after the answer itself
+  // has been sent). If the server refuses, the card goes away again and the answer stays in the history.
+  const syncChain = new Map(); // cardId -> pending undo sync
+  let undoQueue = Promise.resolve();
+  async function syncUndo(entry) {
     try { await entry.promise; } catch (_) {}
     try {
       if (entry.queued && entry.photos.length) await idb.del(entry.payload.clientAnswerId);
       else if (entry.queued && outbox().some((p) => p.clientAnswerId === entry.payload.clientAnswerId)) setOutbox(outbox().filter((p) => p.clientAnswerId !== entry.payload.clientAnswerId));
       else if (entry.answerId) await api('/api/answers/undo', { method: 'POST', body: JSON.stringify({ answerId: entry.answerId }) });
-    } catch (e) { if (e.status) { toast(`Couldn't undo: ${e.message}`, COLORS.left); render(); return; } }
+    } catch (e) { if (e.status) throw e; }
+  }
+  async function undo() {
+    const entry = state.history.pop();
+    if (!entry) return;
     state.session = state.session.filter((x) => x !== entry);
-    state.deck.unshift(entry.card);
+    if (!state.deck.some((c) => c.id === entry.card.id)) state.deck.unshift(entry.card);
     el.cleared.hidden = true;
     el.app.classList.remove('is-cleared');
     render();
@@ -843,27 +990,41 @@
       springBack(node, { x: from[0], y: from[1], rot: from[2] }, { x: 0, y: 0 });
     }
     toast(`Undone · ${entry.card.source}`, COLORS.undo);
+    const sync = undoQueue = undoQueue.catch(() => {}).then(() => syncUndo(entry));
+    syncChain.set(entry.card.id, sync);
+    try { await sync; }
+    catch (e) {
+      toast(`Couldn't undo: ${e.message}`, COLORS.left);
+      if (!state.history.some((x) => x.card.id === entry.card.id)) { // not answered again meanwhile: put things back
+        state.deck = state.deck.filter((c) => c.id !== entry.card.id);
+        state.history.push(entry); state.session.push(entry);
+        render();
+        if (!state.deck.length) renderCleared(false);
+      }
+    } finally { if (syncChain.get(entry.card.id) === sync) syncChain.delete(entry.card.id); }
   }
 
   // ---------- confetti ----------
   // Short burst (~2 s): full-canvas clear every frame in device pixels (identity transform), fade over the last 400 ms,
   // then stop the loop and hide the canvas so the summary underneath is clean and tappable. Canvas is pointer-events:none.
+  // Light: ~130 pieces, canvas capped at 1.5x pixels, one setTransform per piece (no save/restore), batched by colour.
   let confettiRun = null;
   function confetti() {
     if (reduced()) return;
     if (confettiRun) confettiRun.stop();
     const cv = $('#confetti'); const ctx = cv.getContext('2d');
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = Math.min(1.5, window.devicePixelRatio || 1);
     const W = window.innerWidth, H = window.innerHeight;
     cv.hidden = false;
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
     const DURATION = 2.0, FADE = 0.4;
     const palette = ['#ffd27a', '#ff8c5a', '#ff5f8f', '#19c37d', '#38b6ff', '#8b7cf6', '#ffffff'];
     const parts = [];
-    const burst = (x, y, n, ang, spread, spd) => { for (let i = 0; i < n; i++) { const a = ang + (Math.random() - 0.5) * spread; const sp = spd * (0.55 + Math.random() * 0.6); parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 12, w: 6 + Math.random() * 7, h: 4 + Math.random() * 6, c: palette[(Math.random() * palette.length) | 0], shape: Math.random() < 0.3 ? 'c' : 'r' }); } };
-    burst(0, H * 0.75, 70, -Math.PI / 3, 0.9, 1050);
-    burst(W, H * 0.75, 70, -Math.PI * 2 / 3, 0.9, 1050);
-    burst(W / 2, H * 0.35, 50, -Math.PI / 2, Math.PI * 2, 560);
+    const burst = (x, y, n, ang, spread, spd) => { for (let i = 0; i < n; i++) { const a = ang + (Math.random() - 0.5) * spread; const sp = spd * (0.55 + Math.random() * 0.6); parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 12, w: 6 + Math.random() * 7, h: 4 + Math.random() * 6, c: (Math.random() * palette.length) | 0, round: Math.random() < 0.3 }); } };
+    burst(0, H * 0.75, 48, -Math.PI / 3, 0.9, 1050);
+    burst(W, H * 0.75, 48, -Math.PI * 2 / 3, 0.9, 1050);
+    burst(W / 2, H * 0.35, 36, -Math.PI / 2, Math.PI * 2, 560);
+    parts.sort((p, q) => p.c - q.c); // fewer fillStyle switches
     const wipe = () => { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.clearRect(0, 0, cv.width, cv.height); };
     const t0 = performance.now();
     let stopped = false, safety;
@@ -877,15 +1038,15 @@
       const t = (performance.now() - t0) / 1000; // wall clock, so slow phones still finish on time
       if (t >= DURATION) { stop(); return false; }
       wipe();
-      const alpha = clamp((DURATION - t) / FADE);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalAlpha = clamp((DURATION - t) / FADE);
+      let fill = -1;
       for (const p of parts) {
         p.vy += 1500 * dt; p.vx *= 1 - 0.9 * dt; p.vy *= 1 - 0.4 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.r += p.vr * dt;
         if (p.y > H + 40) continue;
-        ctx.save(); ctx.globalAlpha = alpha; ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.c;
-        if (p.shape === 'c') { ctx.beginPath(); ctx.arc(0, 0, p.w / 2.4, 0, Math.PI * 2); ctx.fill(); }
-        else { ctx.scale(1, Math.max(0.15, Math.abs(Math.cos(p.r * 2)))); ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); }
-        ctx.restore();
+        if (p.c !== fill) { fill = p.c; ctx.fillStyle = palette[fill]; }
+        const c = Math.cos(p.r) * dpr, s = Math.sin(p.r) * dpr;
+        if (p.round) { ctx.setTransform(c, s, -s, c, p.x * dpr, p.y * dpr); ctx.beginPath(); ctx.arc(0, 0, p.w / 2.4, 0, Math.PI * 2); ctx.fill(); }
+        else { const k = Math.max(0.15, Math.abs(Math.cos(p.r * 2))); ctx.setTransform(c, s, -s * k, c * k, p.x * dpr, p.y * dpr); ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); }
       }
     });
     safety = setTimeout(stop, DURATION * 1000 + 500); // even if rAF is throttled (background tab), clean up
@@ -986,7 +1147,7 @@
     const hadController = !!navigator.serviceWorker.controller;
     let reloading = false;
     const reloadWhenIdle = () => {
-      if (state.busy || state.sheetCard || inflight > 0 || !installWrap.hidden) return setTimeout(reloadWhenIdle, 800);
+      if (state.busy || drag || topAnim || pendingCommits || state.sheetCard || inflight > 0 || !installWrap.hidden) return setTimeout(reloadWhenIdle, 800);
       location.reload();
     };
     navigator.serviceWorker.addEventListener('controllerchange', () => {

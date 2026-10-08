@@ -117,6 +117,7 @@ node scripts/reset.js --all # wipe all cards + the whole answer log, then seed s
 node scripts/reset.js --empty # wipe everything, no samples
 node test/isolated.js test/e2e.js         # Playwright touch test (5 gestures, undo, fling, feedback card) + screenshots/verify.json
 node test/isolated.js test/e2e-photos.js  # photos on replies, offline queue, keyboard-safe sheet, feedback card, confetti -> verify-photos.json
+node test/isolated.js test/perf.js        # swipe profile (CDP trace, 412x915, 4x CPU throttle): frame times, input->frame latency, long tasks
                             # isolated.js = temp data dir + port 8799; the live data/ and :8787 are never touched
 node test/installability.js [baseUrl]  # Chrome installability + offline check
 node scripts/make-icons.js  # regenerate PNG icons from the SVG artwork
@@ -172,6 +173,11 @@ Logs redact `?token=`.
 Per-card `gestures.<dir>` overrides `label`, `value`, `prompt` (tap3), `snooze`, `disabled`.
 If a card sets a label without a value, the value is the slugged label (`"Index fund"` → `index_fund`).
 An overridden `up` snoozes only if its value is `"snooze"` or it sets `snooze: true`.
+
+Swipes feel native at 60-120 Hz: Pointer Events feed a single `requestAnimationFrame` writer (no layout reads per move, only
+`transform`/`opacity`), the card follows from the first pixel, release uses velocity + momentum projection, fly-outs run on the
+compositor (Web Animations) and the answer is recorded right after (optimistic, with the same offline queue and retry), the spring
+back is an exact damped spring (same feel at any refresh rate), the next card is already rendered underneath, and undo is optimistic too.
 
 Desktop fallbacks: on-screen buttons, arrow keys, `Enter`/`r` = reply sheet, `u`/`Backspace`/`Ctrl+Z` = undo, `Esc` closes the sheet.
 Undo marks the answer `undone: true`, appends a `{"gesture":"undo","undoes":"<answerId>"}` entry, and puts the card back as pending.

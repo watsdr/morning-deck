@@ -169,7 +169,7 @@ select.f-input { appearance: auto; }
 
 /* dialogs */
 .mdf-dialog { background: transparent; justify-content: flex-end; }
-.mdf-dialog-backdrop { position: absolute; inset: 0; background: rgba(8,4,24,.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.mdf-dialog-backdrop { position: absolute; inset: 0; background: rgba(8,4,24,.68); } /* no backdrop blur: it re-renders every frame anything moves behind it */
 .mdf-dialog-box { position: relative; margin: 0 10px calc(10px + var(--safe-b)); background: #241a52; border: 1px solid rgba(255,255,255,.14); border-radius: 22px; padding: 18px; box-shadow: 0 -10px 40px rgba(0,0,0,.4); max-height: 80vh; overflow-y: auto; }
 .mdf-dialog-box h3 { margin: 0 0 6px; font-size: 18px; }
 .mdf-dialog-btns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
