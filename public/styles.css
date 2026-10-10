@@ -578,3 +578,9 @@ textarea:focus { border-color: var(--tap3); box-shadow: 0 0 0 4px color-mix(in s
 /* optional link button in the reply sheet (card.link) */
 .sheet-link { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 2px; padding: 8px 14px; border-radius: 999px; font-weight: 700; font-size: 13.5px; text-decoration: none; color: #4b2fd6; background: #efeaff; }
 .sheet-link[hidden] { display: none; }
+
+/* swipe down to dismiss: grabber is a touch-friendly drag handle; no transitions fight the finger mid-drag */
+.sheet .grabber, .install-sheet .grabber { position: relative; touch-action: none; cursor: grab; }
+.sheet .grabber::before, .install-sheet .grabber::before { content: ''; position: absolute; left: -60px; right: -60px; top: -12px; bottom: -12px; }
+.sheet-wrap.dragging .sheet, .install-wrap.dragging .install-sheet { transition: none; will-change: transform; user-select: none; }
+.sheet-wrap.dragging .grabber, .install-wrap.dragging .grabber { cursor: grabbing; }

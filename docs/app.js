@@ -19,6 +19,7 @@
   const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} };
 
   const MAX_PHOTOS = 6, MAX_EDGE = 1600, PHOTO_QUALITY = 0.85, MAX_UPLOAD = 8 * 1024 * 1024;
+  const dragReset = {}; // swipe-down-to-dismiss resets per sheet (filled in by sheetDrag below)
   const state = { deck: [], history: [], session: [], loaded: false, busy: false, taps: [], sheetCard: null, sheetGesture: 'tap3', sheetOpenedAt: 0, locked: false, photos: [] };
   const el = {
     stack: $('#stack'), cleared: $('#cleared'), app: $('#app'), count: $('#countNum'), counter: $('#counter'),
@@ -731,6 +732,7 @@
     clearPhotos();
     for (const p of photos) addPhotoEntry(p);
     setSheetMode(gesture);
+    if (dragReset.sheet) dragReset.sheet();
     el.sheetWrap.classList.remove('closing', 'kb'); el.sheetWrap.hidden = false;
     syncViewport();
     // No auto-focus: the keyboard only opens when the text box is tapped.
@@ -1106,8 +1108,75 @@
     installBtn.setAttribute('aria-label', mode === 'prompt' ? 'Install Morning Deck' : 'How to install Morning Deck');
     installBtn.hidden = false;
   }
-  const openInstallHelp = () => { installWrap.hidden = false; $('#installDone').focus({ preventScroll: true }); };
+  const openInstallHelp = () => { dragReset.install && dragReset.install(); installWrap.hidden = false; $('#installDone').focus({ preventScroll: true }); };
   const closeInstallHelp = () => { installWrap.hidden = true; };
+
+  // ---------- swipe down to dismiss (every bottom sheet) ----------
+  // The sheet follows the finger via transform (one rAF write per frame, no layout reads while moving). It starts from the
+  // grabber anytime, or from the sheet body when its scroll area is at the top. Release past ~25% of the sheet height or
+  // with a fast downward flick closes it; otherwise it springs back. Text fields, buttons and links keep their own taps.
+  function sheetDrag(wrap, sheet, backdrop, scroller, isOpen, close) {
+    let d = null, raf = 0, justDragged = 0;
+    const write = () => { raf = 0; if (!d) return; sheet.style.transform = `translate3d(0,${d.y}px,0)`; backdrop.style.opacity = String(Math.max(0, 1 - d.y / d.h)); };
+    const reset = () => { d = null; if (raf) cancelAnimationFrame(raf); raf = 0; sheet.style.transform = sheet.style.transition = sheet.style.animation = ''; backdrop.style.opacity = backdrop.style.transition = ''; wrap.classList.remove('dragging'); };
+    sheet.addEventListener('pointerdown', (e) => {
+      if (!isOpen() || d || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      const handle = !!e.target.closest('.grabber');
+      if (!handle && e.target.closest('textarea,input,select,button,a,label,[contenteditable]')) return;
+      if (!handle && scroller && scroller.contains(e.target) && scroller.scrollTop > 0) return; // content scrolled: let it scroll
+      d = { id: e.pointerId, x0: e.clientX, y0: e.clientY, y: 0, h: 0, on: false, handle, s: [[e.timeStamp, 0]] };
+    });
+    sheet.addEventListener('pointermove', (e) => {
+      if (!d || e.pointerId !== d.id) return;
+      const dy = e.clientY - d.y0, dx = e.clientX - d.x0;
+      if (!d.on) {
+        if (Math.abs(dy) < 6 && Math.abs(dx) < 6) return;
+        if (dy <= 0 || Math.abs(dx) > dy) { d = null; return; } // upward / sideways: not ours (normal scrolling)
+        d.on = true; d.y0 = e.clientY; d.h = sheet.offsetHeight || 1; // the only layout read, once per gesture
+        try { sheet.setPointerCapture(e.pointerId); } catch (_) {}
+        sheet.style.animation = 'none'; sheet.style.transition = 'none'; backdrop.style.transition = 'none'; wrap.classList.add('dragging');
+      }
+      d.y = Math.max(0, e.clientY - d.y0);
+      d.s.push([e.timeStamp, d.y]); if (d.s.length > 5) d.s.shift();
+      if (!raf) raf = requestAnimationFrame(write);
+    });
+    const end = (e) => {
+      if (!d || e.pointerId !== d.id) return;
+      const g = d; d = null; if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (!g.on) return;
+      justDragged = performance.now(); wrap.classList.remove('dragging');
+      const [t0, y0] = g.s[0], [t1, y1] = g.s[g.s.length - 1];
+      const v = t1 > t0 ? (y1 - y0) / (t1 - t0) : 0; // px/ms over the last few samples
+      sheet.style.transform = `translate3d(0,${g.y}px,0)`;
+      if (e.type !== 'pointercancel' && (g.y > g.h * 0.25 || (v > 0.5 && g.y > 24))) {
+        sheet.style.transition = backdrop.style.transition = ''; sheet.style.animation = ''; // closing animation runs from here
+        close();
+      } else {
+        backdrop.style.transition = 'opacity .3s ease-out'; backdrop.style.opacity = '';
+        sheet.style.transition = 'transform .38s cubic-bezier(.2,1.3,.4,1)'; sheet.style.transform = '';
+        setTimeout(() => { if (!d && !sheet.style.transform) sheet.style.transition = backdrop.style.transition = ''; }, 420);
+      }
+    };
+    sheet.addEventListener('pointerup', end); sheet.addEventListener('pointercancel', end);
+    // A candidate gesture claims the very first downward touchmove, before the browser commits to an overscroll.
+    // Chrome only treats these as blocking from a document-level listener here, so it is attached only while this
+    // sheet is shown (card swipes keep their non-blocking touch path).
+    const onTouchMove = (e) => {
+      if (!d || !e.cancelable) return;
+      const t = e.touches[0]; const dy = t ? t.clientY - d.y0 : 0, dx = t ? t.clientX - d.x0 : 0;
+      if (d.on || (dy > 0 && dy >= Math.abs(dx))) e.preventDefault();
+    };
+    const noop = () => {};
+    const syncTouch = () => {
+      const m = wrap.hidden ? 'removeEventListener' : 'addEventListener';
+      document[m]('touchstart', noop, { passive: false }); document[m]('touchmove', onTouchMove, { passive: false });
+    };
+    new MutationObserver(syncTouch).observe(wrap, { attributes: true, attributeFilter: ['hidden'] }); syncTouch();
+    wrap.addEventListener('click', (e) => { if (performance.now() - justDragged < 350) { e.stopPropagation(); e.preventDefault(); } }, true);
+    return reset;
+  }
+  dragReset.install = sheetDrag(installWrap, installWrap.querySelector('.install-sheet'), $('#installBackdrop'), null, () => !installWrap.hidden, closeInstallHelp);
+  dragReset.sheet = sheetDrag(el.sheetWrap, $('#sheet'), $('#sheetBackdrop'), el.sheetScroll, () => !!state.sheetCard, closeSheet);
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault(); install.deferred = e;
     const first = !install.bipFired; install.bipFired = true; showInstall('prompt');

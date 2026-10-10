@@ -1,5 +1,5 @@
 /* Morning Deck service worker: cache the app shell, network-first for the API. */
-const VERSION = 'md-v7'; // bump on every app release so phones pick up the new shell
+const VERSION = 'md-v8'; // bump on every app release so phones pick up the new shell
 const SHELL_CACHE = `${VERSION}-shell`;
 const API_CACHE = `${VERSION}-api`;
 const SHELL = ['/', '/styles.css', '/app.js', '/manifest.webmanifest', '/fonts/jakarta.woff2',
