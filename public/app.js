@@ -47,6 +47,15 @@
     const sameDay = d.toLocaleDateString('en-US', { timeZone: TZ }) === new Date().toLocaleDateString('en-US', { timeZone: TZ });
     return sameDay ? `${t} · ${rel}` : `${d.toLocaleDateString('en-US', { timeZone: TZ, month: 'short', day: 'numeric' })}, ${t}`;
   }
+  // How long a card has waited / how soon it expires: a nudge for the ones that slipped past earlier mornings.
+  function ageChip(card, now = Date.now()) {
+    if (card.builtin) return null;
+    const exp = card.expiresAt ? Date.parse(card.expiresAt) - now : NaN;
+    if (exp > 0 && exp < 12 * 3600e3) { const hrs = Math.max(1, Math.round(exp / 3600e3)); return { cls: 'chip-due', text: `Expires in ${hrs}h` }; }
+    const age = now - Date.parse(card.createdAt);
+    if (age >= 24 * 3600e3) { const d = Math.floor(age / 86400e3); return { cls: 'chip-stale', text: `Waiting ${d} day${d > 1 ? 's' : ''}` }; }
+    return null;
+  }
   // Display name comes from the server (MD_GREETING_NAME); cached so the header doesn't flicker on the next launch.
   const NAME_KEY = 'md_greeting_name';
   const config = { demo: false, uploads: true, greetingName: (() => { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } })() };
@@ -69,9 +78,15 @@
     el.photoBtn.closest('.photo-row').hidden = !config.uploads;
   }
   let toastTimer;
-  function toast(msg, color = '#fff', ms = 1900) {
+  function toast(msg, color = '#fff', ms = 1900, action) {
     el.toast.innerHTML = '';
     el.toast.append(h('i', { style: `--c:${color}` }), msg);
+    el.toast.classList.toggle('has-action', !!action);
+    if (action) { // e.g. an Undo button right where the eye already is
+      const b = h('button', { type: 'button', class: 'toast-act', 'aria-label': action.aria || action.label }, action.label);
+      b.addEventListener('click', (e) => { e.stopPropagation(); el.toast.classList.remove('show'); action.run(); });
+      el.toast.append(b);
+    }
     el.toast.classList.toggle('long', ms > 2500);
     el.toast.classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => el.toast.classList.remove('show'), ms);
@@ -242,7 +257,8 @@
       ? h('div', { class: 'chips' }, h('span', { class: 'chip' }, 'Feedback'), h('span', { class: 'chip chip-soft' }, '1 minute'))
       : h('div', { class: 'chips' },
         h('span', { class: 'chip' }, card.chip || TYPE_LABEL[card.type] || card.type),
-        h('span', { class: `chip prio-${card.priority}` }, card.priority === 'high' ? 'High priority' : card.priority === 'low' ? 'Low' : 'Normal')));
+        h('span', { class: `chip prio-${card.priority}` }, card.priority === 'high' ? 'High priority' : card.priority === 'low' ? 'Low' : 'Normal'),
+        ...((a) => (a ? [h('span', { class: `chip ${a.cls}` }, a.text)] : []))(ageChip(card))));
     node.append(h('h2', {}, card.title));
     if (card.body) node.append(h('p', { class: 'body' }, card.body));
     if (card.type === 'choice') {
@@ -326,6 +342,8 @@
       const lbl = g ? g[d].label : { right: 'Yes', left: 'No', up: 'Later', down: 'Skip' }[d];
       if (sp.textContent !== lbl) sp.textContent = lbl; // write only on change: no relayout of the bar per swipe
       btn.disabled = !g || !!g[d].disabled;
+      const aria = g ? `${lbl}: ${state.deck[0].title}` : lbl; // screen readers hear what the button answers
+      if (btn.getAttribute('aria-label') !== aria) btn.setAttribute('aria-label', aria);
     }
     const t3 = document.querySelector('.act-tap3');
     const t3l = (g && g.tap3 && g.tap3.label) || 'Reply', t3s = t3.querySelector('span');
@@ -923,10 +941,10 @@
     if (text) payload.text = text;
     const entry = { card, gesture, payload, photos, answerId: null, queued: false };
     state.history.push(entry); state.session.push(entry);
-    buzz(12);
     const pics = photos.length ? ` · ${photos.length} photo${photos.length > 1 ? 's' : ''}` : '';
     const label = gesture === 'tap3' ? (card.builtin ? 'Thanks! Suggestion saved' : 'Reply saved') : card.builtin && gesture === 'right' ? 'Love it · thanks!' : g.label;
-    toast(`${label}${card.builtin ? '' : ` · ${card.source}`}${pics}${gesture === 'up' && g.snooze !== false ? (config.snoozeNote != null ? config.snoozeNote : ' · back tomorrow 6 AM') : ''}`, COLORS[gesture]);
+    toast(`${label}${card.builtin ? '' : ` · ${card.source}`}${pics}${gesture === 'up' && g.snooze !== false ? (config.snoozeNote != null ? config.snoozeNote : ' · back tomorrow 6 AM') : ''}`, COLORS[gesture], 4000, { label: 'Undo', aria: `Undo answer to ${card.title}`, run: () => { if (state.history[state.history.length - 1] === entry) undo(); } });
+    buzz(gesture === 'right' ? [10, 40, 18] : gesture === 'left' ? 22 : 12); // distinct feel per answer
     // Optimistic: the card is already gone on screen; the network catches up. If this card's undo is still syncing,
     // wait for it so the server sees undo -> new answer in order.
     const send = () => (photos.length ? sendAnswer(payload, photos) : api('/api/answers', { method: 'POST', body: JSON.stringify(payload) }));
@@ -1081,7 +1099,11 @@
     else if (e.key === 'Enter' || e.key === 'r') { e.preventDefault(); openSheet(state.deck[0]); }
     else if (e.key === 'u' || e.key === 'Backspace' || ((e.ctrlKey || e.metaKey) && e.key === 'z')) { e.preventDefault(); undo(); }
   });
-  window.addEventListener('online', flushOutbox);
+  // The phone link drops often: say so at once, and that swipes still count (they wait on this phone).
+  const OFFLINE_MSG = 'Offline · keep swiping, answers wait on this phone and sync when you reconnect';
+  window.addEventListener('offline', () => { if (!el.status.textContent || el.status.textContent.startsWith('Offline')) setStatus(OFFLINE_MSG); });
+  window.addEventListener('online', () => { if (el.status.textContent === OFFLINE_MSG) setStatus(''); flushOutbox(); });
+  if (navigator.onLine === false) setStatus(OFFLINE_MSG);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || state.locked) return;
     flushOutbox();

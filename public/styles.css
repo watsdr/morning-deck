@@ -584,3 +584,10 @@ textarea:focus { border-color: var(--tap3); box-shadow: 0 0 0 4px color-mix(in s
 .sheet .grabber::before, .install-sheet .grabber::before { content: ''; position: absolute; left: -60px; right: -60px; top: -12px; bottom: -12px; }
 .sheet-wrap.dragging .sheet, .install-wrap.dragging .install-sheet { transition: none; will-change: transform; user-select: none; }
 .sheet-wrap.dragging .grabber, .install-wrap.dragging .grabber { cursor: grabbing; }
+
+/* toast action (Undo) */
+.toast.show.has-action { pointer-events: auto; display: inline-flex; align-items: center; }
+.toast-act { margin-left: 12px; padding: 6px 12px; border: 0; border-radius: 999px; font: inherit; font-weight: 800; color: #1b1440; background: #ffd666; cursor: pointer; min-height: 32px; }
+/* age / expiry chips */
+.chip.chip-stale { background: #fff1d6; color: #9a5b00; }
+.chip.chip-due { background: #ffe8ec; color: #d42a4f; }
