@@ -52,9 +52,11 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 const PUBLIC_PATHS = new Set(['/manifest.webmanifest', '/sw.js', '/favicon.ico', '/robots.txt']);
 const isPublic = (p) => PUBLIC_PATHS.has(p) || p.startsWith('/icons/');
 
+// Fixed-length digest compare: a short or long guess must not return early on length.
 function safeEq(a, b) {
-  const x = Buffer.from(String(a)), y = Buffer.from(String(b));
-  return x.length === y.length && crypto.timingSafeEqual(x, y);
+  const ha = crypto.createHash('sha256').update(String(a), 'utf8').digest();
+  const hb = crypto.createHash('sha256').update(String(b), 'utf8').digest();
+  return crypto.timingSafeEqual(ha, hb);
 }
 function parseCookies(req) {
   const out = {};
@@ -68,10 +70,18 @@ function authed(req, url) {
   if (DEMO) return 'demo';
   const h = req.headers.authorization || '';
   if (h.startsWith('Bearer ') && safeEq(h.slice(7).trim(), TOKEN)) return 'bearer';
-  if (url.searchParams.has('token') && safeEq(url.searchParams.get('token'), TOKEN)) return 'query';
+  if (url.searchParams.has('token')) {
+    // Cap the guess so a huge query string can't stretch the compare. Never log or echo this value.
+    const presented = String(url.searchParams.get('token') ?? '').slice(0, 4096);
+    if (safeEq(presented, TOKEN)) return 'query';
+    return 'stale-query';
+  }
   const c = parseCookies(req)[COOKIE];
   if (c && safeEq(c, COOKIE_VALUE)) return 'cookie';
   return null;
+}
+function cookieHeaderOk(req) {
+  return safeEq(parseCookies(req)[COOKIE] || '', COOKIE_VALUE);
 }
 function isHttps(req) { return req.socket.encrypted || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https'; }
 function sessionCookie(req) {
@@ -138,9 +148,255 @@ function todaysFeedbackCard(now) {
   return o && core.isPending(o.card, now) ? o.card : null;
 }
 
-const LOCKED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#1b1440"><title>Morning Deck — private</title>
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,sans-serif;background:linear-gradient(160deg,#1b1440,#5b2a86 55%,#f08a5d);color:#fff;text-align:center}div{padding:32px;max-width:320px}h1{font-size:22px;margin:12px 0 6px}p{opacity:.8;line-height:1.5}</style></head>
-<body><div><img src="/icons/icon-192.png" width="72" height="72" alt=""><h1>Morning Deck is private</h1><p>Open it with your private link (the one that ends in <code>?token=…</code>). After the first visit this device stays signed in.</p></div></body></html>`;
+// Failed paste attempts only (not page views, not bot Bearer calls). A correct token still signs in.
+const SIGNIN_WINDOW_MS = 10 * 60 * 1000;
+const SIGNIN_MAX_FAILS = 5;
+const signinFails = []; // { ip, t }
+function clientIp(req) { return String((req.socket && req.socket.remoteAddress) || ''); }
+function pruneSignin(now = Date.now()) {
+  const cutoff = now - SIGNIN_WINDOW_MS;
+  while (signinFails.length && signinFails[0].t < cutoff) signinFails.shift();
+}
+function noteSigninFail(ip) {
+  const now = Date.now();
+  pruneSignin(now);
+  const limited = signinFails.filter((f) => f.ip === ip).length >= SIGNIN_MAX_FAILS;
+  signinFails.push({ ip, t: now });
+  if (signinFails.length > 500) signinFails.splice(0, signinFails.length - 500);
+  return limited;
+}
+function clearSigninFails(ip) {
+  for (let i = signinFails.length - 1; i >= 0; i--) if (signinFails[i].ip === ip) signinFails.splice(i, 1);
+}
+function signinRetryAfter(ip) {
+  pruneSignin();
+  const mine = signinFails.filter((f) => f.ip === ip);
+  if (!mine.length) return 1;
+  return Math.max(1, Math.ceil((mine[0].t + SIGNIN_WINDOW_MS - Date.now()) / 1000));
+}
+// Pull a token out of a pasted phone link or return the trimmed text. The raw paste is never logged or written back.
+function extractToken(raw) {
+  const first = String(raw ?? '').split(/\r?\n/).map((s) => s.trim()).find(Boolean) || '';
+  const s = first.slice(0, 4096);
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s) || /^[/?]/.test(s) || /[?&#]token=/.test(s)) {
+    try {
+      const u = new URL(s, 'http://localhost');
+      if (u.searchParams.has('token')) return String(u.searchParams.get('token') || '').trim().slice(0, 4096);
+    } catch (_) { /* not a URL */ }
+    const m = /[?&#]token=([^&#\s]+)/.exec(s);
+    if (m) {
+      try { return decodeURIComponent(m[1]).trim().slice(0, 4096); }
+      catch (_) { return m[1].trim().slice(0, 4096); }
+    }
+  }
+  return s;
+}
+function isFormPost(req) {
+  return String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase() === 'application/x-www-form-urlencoded';
+}
+async function readPresentedToken(req) {
+  if (isFormPost(req)) {
+    const buf = await readRaw(req, 8192);
+    return extractToken(new URLSearchParams(buf.toString('utf8')).get('token') || '');
+  }
+  const body = await readBody(req, 8192);
+  if (body && typeof body === 'object') {
+    if (typeof body.token === 'string') return extractToken(body.token);
+    if (typeof body.link === 'string') return extractToken(body.link);
+  }
+  return '';
+}
+
+// Self-contained: /styles.css is not public, and a signed-out phone must not flash unstyled HTML or a 401 shell.
+const LOCK_CSS = `
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #1b1440; }
+  .lock-screen {
+    position: fixed; inset: 0; z-index: 80; box-sizing: border-box;
+    display: flex; align-items: center; justify-content: center; overflow: auto;
+    padding: calc(24px + env(safe-area-inset-top, 0px)) 20px calc(24px + env(safe-area-inset-bottom, 0px));
+    color-scheme: dark; color: #fff;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background:
+      radial-gradient(120% 70% at 50% 115%, rgba(255, 179, 122, .9), rgba(242, 119, 110, .35) 28%, transparent 60%),
+      linear-gradient(180deg, #160f38 0%, #2a1a5e 42%, #5a2a85 78%, #a3477f 100%);
+  }
+  .lock-card { width: min(100%, 420px); text-align: center; }
+  .lock-logo { width: 72px; height: 72px; border-radius: 20px; box-shadow: 0 10px 28px rgba(10, 4, 40, .45); }
+  .lock-card h1 { margin: 16px 0 8px; font-size: 28px; font-weight: 800; letter-spacing: -.03em; line-height: 1.15; }
+  .lock-lead, .lock-foot { margin: 0 auto; max-width: 34em; color: rgba(255, 255, 255, .78); font-size: 15.5px; line-height: 1.45; font-weight: 500; }
+  .lock-stale {
+    margin: 14px auto 0; max-width: 36em; padding: 10px 12px; border-radius: 14px;
+    background: rgba(255, 196, 120, .16); border: 1px solid rgba(255, 210, 150, .35);
+    color: #ffe2b5; font-size: 14.5px; font-weight: 650; line-height: 1.4;
+  }
+  .lock-form { margin: 18px 0 0; text-align: left; }
+  .lock-form label { display: block; margin: 0 0 8px; font-size: 12.5px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; color: rgba(255, 255, 255, .72); }
+  .lock-form textarea {
+    display: block; width: 100%; min-height: 96px; resize: vertical; box-sizing: border-box;
+    border-radius: 16px; border: 1px solid rgba(255, 255, 255, .22);
+    background: rgba(12, 8, 32, .45); color: #fff;
+    font: 16px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 12px 14px;
+  }
+  .lock-form textarea:focus { outline: none; border-color: #ffd27a; box-shadow: 0 0 0 4px rgba(255, 210, 122, .25); }
+  .lock-error {
+    margin: 10px 0 0; color: #ffd0d8; background: rgba(255, 79, 109, .16);
+    border: 1px solid rgba(255, 140, 160, .35); border-radius: 12px; padding: 8px 12px;
+    font-size: 14px; font-weight: 650; line-height: 1.4;
+  }
+  .lock-submit {
+    margin-top: 14px; width: 100%; height: 50px; border: 0; border-radius: 16px; cursor: pointer;
+    font: inherit; font-size: 16px; font-weight: 800; color: #2a1650;
+    background: linear-gradient(135deg, #ffe08a, #ffb37a 55%, #ff8fa3);
+    box-shadow: 0 8px 20px rgba(255, 140, 90, .35);
+  }
+  .lock-submit:disabled { opacity: .6; cursor: default; }
+  .lock-submit:active { transform: scale(.98); }
+  .lock-foot { margin-top: 16px; font-size: 12.5px; }
+  @media (prefers-color-scheme: light) {
+    :root { color-scheme: light; }
+    html, body { background: #f6f1ea; }
+    .lock-screen {
+      color-scheme: light; color: #1d1832;
+      background:
+        radial-gradient(120% 70% at 50% 115%, rgba(255, 196, 160, .95), rgba(255, 170, 190, .35) 32%, transparent 62%),
+        linear-gradient(180deg, #fbf7f2 0%, #f3e7f6 48%, #f7e3d8 100%);
+    }
+    .lock-logo { box-shadow: 0 10px 24px rgba(80, 40, 90, .18); }
+    .lock-lead, .lock-foot { color: rgba(29, 24, 50, .72); }
+    .lock-stale { background: #fff4e0; border-color: #f0d7a4; color: #7a4b00; }
+    .lock-form label { color: rgba(29, 24, 50, .62); }
+    .lock-form textarea { background: #fff; color: #1d1832; border-color: rgba(29, 24, 50, .16); }
+    .lock-error { color: #9f1239; background: #ffe8ee; border-color: #f5c2cd; }
+  }
+`;
+function lockPage({ stale = false, error = '' } = {}) {
+  // Only our own strings are interpolated. The pasted token is never written into this document.
+  const staleHtml = stale
+    ? '<p class="lock-stale" id="lockStale">This is an out of date link. Paste a fresh sign-in link or token to continue.</p>'
+    : '';
+  const errorHtml = error === 'rate'
+    ? '<p class="lock-error" id="lockError" role="alert">Too many attempts. Wait a few minutes and try again.</p>'
+    : error === 'bad'
+      ? '<p class="lock-error" id="lockError" role="alert">That link or token did not work.</p>'
+      : '<p class="lock-error" id="lockError" role="alert" hidden></p>';
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#1b1440" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f6f1ea" media="(prefers-color-scheme: light)">
+  <meta name="color-scheme" content="dark light">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex">
+  <title>Sign in again · Morning Deck</title>
+  <style>${LOCK_CSS}</style>
+</head>
+<body>
+  <main class="lock-screen" id="lockScreen">
+    <section class="lock-card">
+      <img class="lock-logo" src="/icons/icon-192.png" width="72" height="72" alt="">
+      <h1 id="lockTitle">Sign in again</h1>
+      <p class="lock-lead">This device's sign-in is missing or no longer works. Paste a fresh sign-in link or token.</p>
+      ${staleHtml}
+      <form class="lock-form" id="lockForm" method="post" action="/api/session">
+        <label for="lockToken">Sign-in link or token</label>
+        <textarea id="lockToken" name="token" rows="3" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Paste a link or token" required></textarea>
+        ${errorHtml}
+        <button class="lock-submit" id="lockSubmit" type="submit">Sign in</button>
+      </form>
+      <p class="lock-foot">Swipes only record a decision. Nothing is sent until this device is signed in.</p>
+    </section>
+  </main>
+  <script>
+    (function () {
+      var form = document.getElementById('lockForm');
+      if (!form || !window.fetch) return;
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var input = document.getElementById('lockToken');
+        var err = document.getElementById('lockError');
+        var btn = document.getElementById('lockSubmit');
+        var token = input ? input.value : '';
+        if (btn) btn.disabled = true;
+        if (err) { err.hidden = true; err.textContent = ''; }
+        fetch('/api/session', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ token: token })
+        }).then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (data) { return { res: res, data: data }; });
+        }).then(function (o) {
+          if (o.res.ok) { if (input) input.value = ''; location.replace('/'); return; }
+          if (err) {
+            err.hidden = false;
+            err.textContent = (o.data && o.data.error) || (o.res.status === 429
+              ? 'Too many attempts. Wait a few minutes and try again.'
+              : 'That link or token did not work.');
+          }
+          if (btn) btn.disabled = false;
+        }).catch(function () {
+          if (err) { err.hidden = false; err.textContent = 'Could not reach Morning Deck. Check the connection and try again.'; }
+          if (btn) btn.disabled = false;
+        });
+      });
+    })();
+  </script>
+</body>
+</html>`;
+}
+function lockResponse(req, res, { stale = false, error = '', extraHeaders = {} } = {}) {
+  const headers = {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+    'X-MD-Lock': '1',
+    'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    ...extraHeaders,
+  };
+  const html = lockPage({ stale, error });
+  if (req.method === 'HEAD') {
+    res.writeHead(200, { ...SEC_HEADERS, ...headers, 'Content-Length': Buffer.byteLength(html) });
+    return res.end();
+  }
+  return send(res, 200, html, headers);
+}
+function isDocument(req, url) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  if (url.pathname === '/' || url.pathname === '/index.html') return true;
+  return String(req.headers.accept || '').includes('text/html');
+}
+const SIGNIN_ERRORS = { bad: 'That link or token did not work.', rate: 'Too many attempts. Wait a few minutes and try again.' };
+async function handleSession(req, res) {
+  let presented = '';
+  try { presented = await readPresentedToken(req); }
+  catch (e) {
+    if (e.status) return json(res, e.status, { error: e.status === 413 ? 'body too large' : 'invalid JSON body' });
+    throw e;
+  }
+  const form = isFormPost(req);
+  if (DEMO) {
+    if (form) return send(res, 303, '', { Location: '/', 'Cache-Control': 'no-store' });
+    return json(res, 200, { ok: true, demo: true });
+  }
+  // Always compare, including while limited, so a wrong guess and the real token take the same path.
+  const ok = safeEq(presented, TOKEN);
+  const ip = clientIp(req);
+  if (ok) {
+    clearSigninFails(ip);
+    const cookie = sessionCookie(req);
+    if (form) return send(res, 303, '', { 'Set-Cookie': cookie, Location: '/', 'Cache-Control': 'no-store' });
+    return json(res, 200, { ok: true }, { 'Set-Cookie': cookie });
+  }
+  const limited = noteSigninFail(ip);
+  const key = limited ? 'rate' : 'bad';
+  const extra = limited ? { 'Retry-After': String(signinRetryAfter(ip)) } : {};
+  if (form) return lockResponse(req, res, { stale: false, error: key, extraHeaders: extra });
+  return json(res, limited ? 429 : 401, { error: SIGNIN_ERRORS[key] }, extra);
+}
 
 // ---------- API ----------
 async function handleApi(req, res, url) {
@@ -353,16 +609,36 @@ const server = http.createServer(async (req, res) => {
   const started = Date.now();
   let url;
   try { url = new URL(req.url, 'http://localhost'); } catch { return send(res, 400, 'bad url'); }
+  const requestHadToken = url.searchParams.has('token');
   res.on('finish', () => {
-    const safePath = url.pathname + (url.searchParams.has('token') ? '?token=[redacted]' : '');
+    // Never log the query string of a token URL (the token is a secret, and handlers may strip it before this runs).
+    const safePath = url.pathname + (requestHadToken ? '?token=[redacted]' : (url.search || ''));
     console.log(`${new Date().toISOString()} ${req.method} ${safePath} ${res.statusCode} ${Date.now() - started}ms`);
   });
   try {
+    if (url.pathname === '/api/session' && req.method === 'POST') return await handleSession(req, res);
     if (isPublic(url.pathname) && (req.method === 'GET' || req.method === 'HEAD')) return serveStatic(req, res, url);
     const how = authed(req, url);
+    if (how === 'stale-query') {
+      // Old Android wrapper opens ?token= every time. A valid cookie still gets in; the dead token is stripped
+      // and never copied into the redirect or the HTML. Otherwise send the browser to the sign-in screen
+      // (302, then 200) — not a bare 401, and not a URL that still contains the token.
+      if (!url.pathname.startsWith('/api/') && (req.method === 'GET' || req.method === 'HEAD') && cookieHeaderOk(req)) {
+        url.searchParams.delete('token');
+        return send(res, 302, 'redirecting', { 'Set-Cookie': sessionCookie(req), Location: url.pathname + (url.search || ''), 'Cache-Control': 'no-store' });
+      }
+      if (url.pathname.startsWith('/api/')) return json(res, 401, { error: 'unauthorized: send Authorization: Bearer <token>' });
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        url.searchParams.delete('token');
+        url.searchParams.set('link', 'expired');
+        return send(res, 302, 'redirecting', { Location: url.pathname + (url.search || ''), 'Cache-Control': 'no-store' });
+      }
+      return send(res, 401, 'unauthorized');
+    }
     if (!how) {
       if (url.pathname.startsWith('/api/')) return json(res, 401, { error: 'unauthorized: send Authorization: Bearer <token>' });
-      return send(res, 401, LOCKED_PAGE, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      if (isDocument(req, url)) return lockResponse(req, res, { stale: url.searchParams.get('link') === 'expired' });
+      return send(res, 401, 'unauthorized', { 'Cache-Control': 'no-store' });
     }
     if (how === 'query' && !url.pathname.startsWith('/api/')) {
       // First visit with ?token=: set the httpOnly cookie, then drop the token from the URL bar/history.

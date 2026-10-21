@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node server.js",
     "build:pages": "node scripts/build-pages.js",
-    "test": "node test/isolated.js test/api.js --empty && node test/isolated.js test/e2e.js && node test/isolated.js test/e2e-photos.js"
+    "test": "node test/isolated.js test/session.js --empty && node test/isolated.js test/api.js --empty && node test/isolated.js test/e2e.js && node test/isolated.js test/e2e-photos.js"
   },
   "devDependencies": {
     "playwright-core": "^1.59.1"
