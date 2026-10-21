@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#1d1442">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
+  <style>html,body{background:#1d1442}html{color-scheme:dark}@media (prefers-color-scheme:light){html:has(.lock-screen:not([hidden])){background:#f6f1ea}}</style>
   <meta name="description" content="Your bots' questions, one swipe each.">
   <meta name="mobile-web-app-capable" content="yes">
   <title>Morning Deck</title>
@@ -132,6 +133,23 @@
   </div>
 
   <canvas id="confetti" aria-hidden="true"></canvas>
+
+  <div class="lock-screen" id="lockScreen" hidden role="dialog" aria-modal="true" aria-labelledby="lockTitle">
+    <section class="lock-card">
+      <img class="lock-logo" src="/icons/icon-192.png" width="72" height="72" alt="">
+      <h1 id="lockTitle">Sign in again</h1>
+      <p class="lock-lead">This device's sign-in is missing or no longer works. Paste a fresh sign-in link or token.</p>
+      <p class="lock-stale" id="lockStale" hidden>This is an out of date link. Paste a fresh sign-in link or token to continue.</p>
+      <form class="lock-form" id="lockForm" method="post" action="/api/session">
+        <label for="lockToken">Sign-in link or token</label>
+        <textarea id="lockToken" name="token" rows="3" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Paste a link or token"></textarea>
+        <p class="lock-error" id="lockError" role="alert" hidden></p>
+        <button class="lock-submit" id="lockSubmit" type="submit">Sign in</button>
+      </form>
+      <p class="lock-foot">Swipes only record a decision. Nothing is sent until this device is signed in.</p>
+    </section>
+  </div>
+
   <script src="/app.js" defer></script>
 </body>
 </html>

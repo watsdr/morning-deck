@@ -193,18 +193,22 @@
   function flushOutbox() { return flushing || (flushing = doFlush().finally(() => { flushing = null; })); }
   async function doFlush() {
     let list = outbox();
-    while (list.length) {
+    let authFailed = false;
+    while (list.length && !authFailed) {
       try { await api('/api/answers', { method: 'POST', body: JSON.stringify(list[0]) }); }
-      catch (e) { if (transient(e)) break; /* still offline */ }
+      catch (e) {
+        if (e.status === 401) { authFailed = true; break; } // keep the decision on this phone; don't retry in a loop
+        if (transient(e)) break; /* still offline */
+      }
       list = outbox().filter((p) => p.clientAnswerId !== list[0].clientAnswerId); setOutbox(list);
     }
     let photoItems = await idb.all(), failed = 0;
     for (const it of photoItems) {
-      if (list.length) break; // offline: don't hammer
+      if (list.length || authFailed) break; // offline or signed out: don't hammer
       try { await sendAnswer(it.payload, it.photos); await idb.del(it.id); }
       catch (e) {
         if (transient(e)) break;
-        if (e.status === 401) break;
+        if (e.status === 401) { authFailed = true; break; }
         failed++; await idb.put({ ...it, error: e.message, failedAt: new Date().toISOString() }).catch(() => {}); // keep it, never drop photos
       }
     }
@@ -212,10 +216,12 @@
     const waiting = list.length + photoItems.length;
     const pics = photoItems.reduce((n, it) => n + it.photos.length, 0);
     const bad = photoItems.find((it) => it.error && failed);
-    setStatus(bad ? `Couldn't sync a reply with photos (${bad.error}) · tap to retry`
-      : waiting ? `Offline · ${waiting} answer${waiting > 1 ? 's' : ''}${pics ? ` (${pics} photo${pics > 1 ? 's' : ''})` : ''} waiting to sync` : '');
+    if (!state.locked) {
+      setStatus(bad ? `Couldn't sync a reply with photos (${bad.error}) · tap to retry`
+        : waiting ? `Offline · ${waiting} answer${waiting > 1 ? 's' : ''}${pics ? ` (${pics} photo${pics > 1 ? 's' : ''})` : ''} waiting to sync` : '');
+    }
     clearTimeout(retryTimer);
-    if (waiting) retryTimer = setTimeout(flushOutbox, 30000);
+    if (waiting && !authFailed && !state.locked) retryTimer = setTimeout(flushOutbox, 30000);
     return waiting;
   }
 
@@ -391,9 +397,73 @@
 
   function showLocked() {
     state.locked = true;
-    el.stack.innerHTML = '';
-    el.cleared.hidden = false;
-    el.cleared.innerHTML = '<div class="sunrise"><div class="sun"></div><div class="horizon"></div></div><h2>Locked</h2><p class="cleared-sub">Open Morning Deck with your private link (ending in <code>?token=…</code>) to sign this device in.</p>';
+    if (el.stack) el.stack.replaceChildren();
+    document.querySelectorAll('.card.skeleton').forEach((n) => n.remove());
+    const screen = $('#lockScreen');
+    // Friends and the static demo have no server session. The real app shows the full-screen sign-in.
+    if (screen && !STATIC_DEMO && !LOCAL_API) {
+      screen.hidden = false;
+      if (el.app) { el.app.setAttribute('inert', ''); el.app.setAttribute('aria-hidden', 'true'); }
+      const installBtn = $('#installBtn'); if (installBtn) installBtn.hidden = true;
+      const installWrap = $('#installWrap'); if (installWrap) installWrap.hidden = true;
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta && !meta.dataset.mdTheme) {
+        meta.dataset.mdTheme = meta.getAttribute('content') || '';
+        meta.setAttribute('content', matchMedia('(prefers-color-scheme: light)').matches ? '#f6f1ea' : '#1b1440');
+      }
+      const input = $('#lockToken');
+      if (input && document.activeElement !== input) { try { input.focus({ preventScroll: true }); } catch (_) {} }
+      try {
+        const u = new URL(location.href);
+        const staleLink = u.searchParams.get('link') === 'expired';
+        const note = $('#lockStale');
+        if (note && staleLink) note.hidden = false;
+        // A stale ?token= must leave the address bar. The value is deleted, not copied anywhere.
+        if (u.searchParams.has('token')) {
+          u.searchParams.delete('token');
+          if (!u.searchParams.has('link')) u.searchParams.set('link', 'expired');
+          history.replaceState(null, '', u.pathname + u.search + u.hash);
+        }
+      } catch (_) {}
+      return;
+    }
+    if (el.cleared) {
+      el.cleared.hidden = false;
+      el.cleared.innerHTML = '<div class="sunrise"><div class="sun"></div><div class="horizon"></div></div><h2>Sign in again</h2><p class="cleared-sub">Open Morning Deck with your private link (ending in <code>?token=…</code>) to sign this device in.</p>';
+    }
+  }
+  async function submitLock(ev) {
+    ev.preventDefault();
+    const input = $('#lockToken');
+    const err = $('#lockError');
+    const btn = $('#lockSubmit');
+    const token = input ? input.value : '';
+    if (btn) btn.disabled = true;
+    if (err) { err.hidden = true; err.textContent = ''; }
+    try {
+      const res = await fetch('/api/session', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (input) input.value = '';
+        const u = new URL(location.href);
+        u.searchParams.delete('token');
+        if (u.searchParams.get('link') === 'expired') u.searchParams.delete('link');
+        u.hash = '';
+        location.replace(u.pathname + u.search);
+        return;
+      }
+      if (err) {
+        err.hidden = false;
+        err.textContent = data.error || (res.status === 429 ? 'Too many attempts. Wait a few minutes and try again.' : 'That link or token did not work.');
+      }
+    } catch (_) {
+      if (err) { err.hidden = false; err.textContent = 'Could not reach Morning Deck. Check the connection and try again.'; }
+    }
+    if (btn) btn.disabled = false;
   }
 
   // ---------- drag physics ----------
@@ -672,6 +742,7 @@
 
   // programmatic swipe (buttons / keyboard / sheet quick answers)
   function swipe(dir, opts = {}) {
+    if (state.locked) return; // a signed-out screen records nothing
     const node = el.stack.querySelector('.card[data-depth="0"]:not(.flying)');
     const card = node && topCardData(node);
     if (!card || (card.gestures[dir] || {}).disabled || state.busy) return;
@@ -994,6 +1065,7 @@
     } catch (e) { if (e.status) throw e; }
   }
   async function undo() {
+    if (state.locked) return;
     const entry = state.history.pop();
     if (!entry) return;
     state.session = state.session.filter((x) => x !== entry);
@@ -1090,7 +1162,10 @@
   el.status.addEventListener('click', () => flushOutbox().then((n) => { if (!n) toast('All synced', COLORS.right); }));
   el.save.addEventListener('click', saveReply);
   el.reply.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveReply(); });
+  const lockForm = $('#lockForm');
+  if (lockForm && !STATIC_DEMO && !LOCAL_API) lockForm.addEventListener('submit', submitLock);
   document.addEventListener('keydown', (e) => {
+    if (state.locked) return;
     if (state.sheetCard) { if (e.key === 'Escape') closeSheet(); return; }
     if (document.documentElement.hasAttribute('data-overlay')) return; // a page overlay (e.g. friends settings) has the keyboard
     if (e.target.closest && e.target.closest('textarea,input,select')) return;
@@ -1102,7 +1177,7 @@
   // The phone link drops often: say so at once, and that swipes still count (they wait on this phone).
   const OFFLINE_MSG = 'Offline · keep swiping, answers wait on this phone and sync when you reconnect';
   window.addEventListener('offline', () => { if (!el.status.textContent || el.status.textContent.startsWith('Offline')) setStatus(OFFLINE_MSG); });
-  window.addEventListener('online', () => { if (el.status.textContent === OFFLINE_MSG) setStatus(''); flushOutbox(); });
+  window.addEventListener('online', () => { if (state.locked) return; if (el.status.textContent === OFFLINE_MSG) setStatus(''); flushOutbox(); });
   if (navigator.onLine === false) setStatus(OFFLINE_MSG);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || state.locked) return;
@@ -1241,6 +1316,9 @@
       if (state.busy || drag || topAnim || pendingCommits || state.sheetCard || inflight > 0 || !installWrap.hidden) return setTimeout(reloadWhenIdle, 800);
       location.reload();
     };
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'md-unauthorized') showLocked();
+    });
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!hadController || reloading) return; // first install: this page is already current
       reloading = true; toast('Updating Morning Deck…', '#fff', 1600); setTimeout(reloadWhenIdle, 600);

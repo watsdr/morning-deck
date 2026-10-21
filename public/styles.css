@@ -591,3 +591,62 @@ textarea:focus { border-color: var(--tap3); box-shadow: 0 0 0 4px color-mix(in s
 /* age / expiry chips */
 .chip.chip-stale { background: #fff1d6; color: #9a5b00; }
 .chip.chip-due { background: #ffe8ec; color: #d42a4f; }
+
+/* ---------- sign-in again (stale or missing session) ---------- */
+.lock-screen {
+  position: fixed; inset: 0; z-index: 80; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center; overflow: auto;
+  padding: calc(24px + var(--safe-t)) 20px calc(24px + var(--safe-b));
+  color-scheme: dark; color: #fff;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(120% 70% at 50% 115%, rgba(255, 179, 122, .9), rgba(242, 119, 110, .35) 28%, transparent 60%),
+    linear-gradient(180deg, #160f38 0%, #2a1a5e 42%, #5a2a85 78%, #a3477f 100%);
+}
+.lock-screen[hidden] { display: none !important; }
+.lock-card { width: min(100%, 420px); text-align: center; }
+.lock-logo { width: 72px; height: 72px; border-radius: 20px; box-shadow: 0 10px 28px rgba(10, 4, 40, .45); }
+.lock-card h1 { margin: 16px 0 8px; font-size: 28px; font-weight: 800; letter-spacing: -.03em; line-height: 1.15; color: inherit; }
+.lock-lead, .lock-foot { margin: 0 auto; max-width: 34em; color: rgba(255, 255, 255, .78); font-size: 15.5px; line-height: 1.45; font-weight: 500; }
+.lock-stale {
+  margin: 14px auto 0; max-width: 36em; padding: 10px 12px; border-radius: 14px;
+  background: rgba(255, 196, 120, .16); border: 1px solid rgba(255, 210, 150, .35);
+  color: #ffe2b5; font-size: 14.5px; font-weight: 650; line-height: 1.4;
+}
+.lock-form { margin: 18px 0 0; text-align: left; }
+.lock-form label { display: block; margin: 0 0 8px; font-size: 12.5px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; color: rgba(255, 255, 255, .72); }
+.lock-form textarea {
+  display: block; width: 100%; min-height: 96px; resize: vertical; box-sizing: border-box;
+  border-radius: 16px; border: 1px solid rgba(255, 255, 255, .22);
+  background: rgba(12, 8, 32, .45); color: #fff;
+  font: 16px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 12px 14px;
+}
+.lock-form textarea:focus { outline: none; border-color: #ffd27a; box-shadow: 0 0 0 4px rgba(255, 210, 122, .25); }
+.lock-error {
+  margin: 10px 0 0; color: #ffd0d8; background: rgba(255, 79, 109, .16);
+  border: 1px solid rgba(255, 140, 160, .35); border-radius: 12px; padding: 8px 12px;
+  font-size: 14px; font-weight: 650; line-height: 1.4;
+}
+.lock-submit {
+  margin-top: 14px; width: 100%; height: 50px; border: 0; border-radius: 16px; cursor: pointer;
+  font: inherit; font-size: 16px; font-weight: 800; color: #2a1650;
+  background: linear-gradient(135deg, #ffe08a, #ffb37a 55%, #ff8fa3);
+  box-shadow: 0 8px 20px rgba(255, 140, 90, .35);
+}
+.lock-submit:disabled { opacity: .6; cursor: default; }
+.lock-submit:active { transform: scale(.98); }
+.lock-foot { margin-top: 16px; font-size: 12.5px; }
+@media (prefers-color-scheme: light) {
+  .lock-screen {
+    color-scheme: light; color: #1d1832;
+    background:
+      radial-gradient(120% 70% at 50% 115%, rgba(255, 196, 160, .95), rgba(255, 170, 190, .35) 32%, transparent 62%),
+      linear-gradient(180deg, #fbf7f2 0%, #f3e7f6 48%, #f7e3d8 100%);
+  }
+  .lock-logo { box-shadow: 0 10px 24px rgba(80, 40, 90, .18); }
+  .lock-lead, .lock-foot { color: rgba(29, 24, 50, .72); }
+  .lock-stale { background: #fff4e0; border-color: #f0d7a4; color: #7a4b00; }
+  .lock-form label { color: rgba(29, 24, 50, .62); }
+  .lock-form textarea { background: #fff; color: #1d1832; border-color: rgba(29, 24, 50, .16); }
+  .lock-error { color: #9f1239; background: #ffe8ee; border-color: #f5c2cd; }
+}
