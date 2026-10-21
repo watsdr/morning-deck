@@ -3,6 +3,7 @@
 #   scripts/start.sh               -> server only
 #   scripts/start.sh --tailscale   -> server + Tailscale Funnel (permanent https://morning-deck.<tailnet>.ts.net)
 #   scripts/start.sh --tunnel      -> server + trycloudflare quick tunnel (URL printed; changes every restart)
+#   scripts/start.sh --cloudflare  -> server + named Cloudflare Tunnel (https://morning.watsdr.com; see scripts/cloudflare-tunnel.sh)
 #   Flags can be combined: scripts/start.sh --tailscale --tunnel
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -12,12 +13,13 @@ mkdir -p run logs
 [ -f data/cards.json ] || node scripts/reset.js
 set -a; . ./.env; set +a
 
-WANT_TUNNEL=0; WANT_TS=0
+WANT_TUNNEL=0; WANT_TS=0; WANT_CF=0
 for arg in "$@"; do
   case "$arg" in
     --tunnel) WANT_TUNNEL=1 ;;
     --tailscale) WANT_TS=1 ;;
-    *) echo "unknown option: $arg (use --tailscale and/or --tunnel)" >&2; exit 2 ;;
+    --cloudflare) WANT_CF=1 ;;
+    *) echo "unknown option: $arg (use --tailscale, --tunnel, --cloudflare)" >&2; exit 2 ;;
   esac
 done
 
@@ -85,3 +87,5 @@ if [ "$WANT_TUNNEL" = 1 ]; then
     if [ -n "${URL:-}" ]; then echo "$URL" > run/tunnel.url; echo "tunnel started (pid $(cat run/tunnel.pid)): $URL"; echo "phone link: $URL/?token=<MD_TOKEN from .env>"; else echo "tunnel started but no URL yet; see logs/tunnel.log"; fi
   fi
 fi
+
+if [ "$WANT_CF" = 1 ]; then scripts/cloudflare-tunnel.sh start || echo "named Cloudflare tunnel not started (see above)"; fi

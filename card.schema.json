@@ -114,7 +114,24 @@
     },
     "replyTo": {
       "type": "object",
-      "description": "Opaque routing hint echoed back on every answer, e.g. {\"channel\":\"slack\",\"thread\":\"...\"} or {\"bot\":\"scheduler\",\"task\":\"t_123\"}. Morning Deck never acts on it."
+      "description": "Opaque routing hint echoed back on every answer, e.g. {\"channel\":\"slack\",\"thread\":\"...\"} or {\"bot\":\"scheduler\",\"task\":\"t_123\"}. Morning Deck never acts on it. Conventions: bot, agentId, ownerBot, writeBack (see docs/BOT-API.md).",
+      "properties": {
+        "bot": {
+          "type": "string",
+          "description": "Short bot name the forwarding routine sends answers to."
+        },
+        "agentId": {
+          "type": "string",
+          "description": "Exact agent that asked; the routine forwards answers to this agent."
+        },
+        "ownerBot": {
+          "type": "string",
+          "description": "Bot that owns the follow-up, if different from the poster."
+        },
+        "writeBack": {
+          "description": "Anything the bot needs to resume (task/thread id, file path). Returned untouched."
+        }
+      }
     }
   },
   "$defs": {

@@ -93,7 +93,7 @@ const btnInfo = (page) => page.evaluate(() => { const b = document.querySelector
   // 5) diagnostics log
   {
     const lines = fs.readFileSync(process.env.MD_DIAG_LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    const allowed = new Set(['at', 'ua', 'displayMode', 'bipFired', 'swControlled', 'standalone', 'ts', 'event', 'outcome', 'installed', 'path', 'via']);
+    const allowed = new Set(['at', 'ua', 'displayMode', 'bipFired', 'swControlled', 'standalone', 'ts', 'event', 'outcome', 'installed', 'bipSupported', 'secs', 'path', 'via']);
     const ev = lines.map((l) => `${l.event}${l.outcome ? ':' + l.outcome : ''}`);
     const types = lines.every((l) => typeof l.ua === 'string' && typeof l.bipFired === 'boolean' && typeof l.swControlled === 'boolean' && typeof l.standalone === 'boolean' && typeof l.displayMode === 'string' && l.ts);
     check('diag.log lines (fields + events)', types && lines.every((l) => Object.keys(l).every((k) => allowed.has(k))) && ev.includes('load') && ev.includes('prompt:accepted') && ev.includes('prompt:dismissed') && ev.includes('appinstalled') && ev.includes('help-opened'), { count: lines.length, events: ev, sample: lines.find((l) => l.event === 'load') });

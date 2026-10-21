@@ -5,3 +5,5 @@ run/
 logs/
 bin/
 screenshots/
+.env.old
+*.key

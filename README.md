@@ -1,112 +1,17 @@
-# Morning Deck
+# Morning Deck (v0)
 
-**▶ [Try the demo](https://watsdr.github.io/morning-deck/)**: runs entirely in your browser on example cards, and nothing is saved.
-Open it on your phone and swipe.
-
-**▶ [Morning Deck for Friends](https://watsdr.github.io/morning-deck/friends/)**: a free, private version anyone can use without a server.
-It builds your daily deck from weather, news, your calendar, tasks, mail and your own automations, right on your phone. See [below](#morning-deck-for-friends).
-
-One deck of swipe cards each morning with every question your bots have for you: swipe right/left/up/down to answer,
-triple-tap to reply with text or photos. Installable PWA (Android Chrome) + a tiny zero-dependency Node API with a JSON store.
+One deck of swipe cards each morning with every question Derek's bots have for him.
+Installable PWA (Android Chrome) + a tiny zero-dependency Node API with a JSON store.
 
 > **Safety:** a gesture only **records** a decision in the answer log (`data/answers.json`).
 > Nothing in this app sends messages, buys, submits, or calls any outside service.
-> Your bots read their answers back with `GET /api/answers` and act on them on their own.
-
-## Quickstart
-
-1. **Install Node.js 18+.** That's the only requirement to run it (no `npm install`). The Playwright tests also need `npm install` and Google Chrome.
-2. **Create your config:** `scripts/init-env.sh` writes `.env` (mode 600) with a random private `MD_TOKEN`, `MD_PORT=8787`, `MD_HOST=127.0.0.1`,
-   and an empty `MD_GREETING_NAME` (set it to your name for "Good morning, <name>").
-3. **Start it:** `scripts/start.sh`. The first start seeds a few SAMPLE cards so there's something to swipe; `node scripts/reset.js --empty` clears them.
-   Open `http://127.0.0.1:8787/?token=<MD_TOKEN>` on the same machine. `scripts/stop.sh` stops it.
-4. **Reach it from your phone** (any public URL still needs the token):
-   * **Quick, temporary:** download [`cloudflared`](https://github.com/cloudflare/cloudflared/releases) to `bin/cloudflared` (`chmod +x`),
-     then run `scripts/start.sh --tunnel` and `scripts/phone-url.sh --tunnel`. Open the printed link on your phone, then use Chrome menu →
-     *Add to Home screen*. The URL changes whenever the tunnel restarts.
-   * **Permanent:** use Tailscale Funnel (`scripts/start.sh --tailscale`) or a named Cloudflare tunnel. See [Permanent URL](#permanent-url-optional).
-5. **Hook up your bots:** any script that can make HTTP calls can post cards and read answers:
-
-   ```bash
-   TOKEN=...                      # MD_TOKEN from .env
-   BASE=http://127.0.0.1:8787     # or your public https URL
-
-   # put a question in tomorrow's deck
-   curl -s -X POST "$BASE/api/cards" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-     -d '{"id":"scheduler-move-dentist-2026-10-08","source":"Scheduler","emoji":"📅","title":"Move the dentist to Thu 4:15 PM?","body":"The office offered a new slot.","replyTo":{"bot":"scheduler","task":"t_1"}}'
-
-   # read the answers back (filter by bot and time)
-   curl -s "$BASE/api/answers?source=Scheduler&since=2026-10-08T00:00:00-04:00" -H "Authorization: Bearer $TOKEN"
-   ```
-
-   Each answer has `value` (e.g. `yes`/`no`/`skip`/`snooze`), optional `text` and photo `attachments`, and echoes your card's `replyTo`.
-   See [Card intake format](#card-intake-format) and [API](#api).
-
-## Installing on your phone
-
-When Chrome says the app is installable, it fires `beforeinstallprompt`. The app keeps that event and shows an **Install app** pill
-next to the cards-left badge; tapping it opens Chrome's install dialog. If the event doesn't arrive within about 4 s (in-app browsers,
-already installed, Chrome's own rules), a smaller **Install** button opens a short help sheet: the Install icon in the address bar,
-⋮ → *Install and create shortcut* / *Add to home screen*, or Share → *Add to home screen*. Inside another app's browser, choose ⋮ → *Open in Chrome* first.
-Nothing is shown when the app already runs installed (`display-mode: standalone`). Each page load also sends a small diagnostics
-beacon (`POST /api/diag`, UA + display/SW flags only) so you can see what the phone's Chrome reports in `logs/diag.log`.
-New releases update themselves: the service worker skips waiting and claims the page, and the page reloads once it's idle.
-
-## Use it with a Grok Bot
-
-Morning Deck is a good inbox for a Grok Bot (or any assistant with a shell) and the other bots it works with:
-
-1. The bot clones this repo on its machine and runs `scripts/init-env.sh` then `scripts/start.sh`. The server needs only Node 18+.
-2. It exposes the server with a tunnel: `scripts/start.sh --tunnel` (Cloudflare quick tunnel) or Tailscale Funnel / a named tunnel for a
-   permanent URL. Then it sends you the phone link from `scripts/phone-url.sh` once. After that first visit, your phone stays signed in.
-3. Whenever any bot has a question for you, it `POST`s a card to `/api/cards` with the Bearer token. Each morning you swipe through the deck.
-4. The bots poll `GET /api/answers?source=<bot>&since=<time>` and act on your answers themselves. Morning Deck only records them.
-
-## Static demo (GitHub Pages)
-
-`node scripts/build-pages.js` builds `docs/`, a server-less copy of the app for GitHub Pages (Settings → Pages → *main* / */docs*).
-It's the same `public/app.js`. When the page is on `*.github.io`, sets `window.MD_STATIC_DEMO = true`, or is opened with `?demo=static`,
-the app swaps its fetch layer for an in-browser mock API. The deck comes from `docs/demo-deck.json`: the generic samples from
-`scripts/sample-cards.js` plus the built-in feedback card. Answers and undo live in memory only, photos are off, and the Demo banner shows.
-All paths are relative, so it works under `/<repo>/`; the manifest and service worker are scoped to that subpath.
-Re-run the build after changing `public/` and commit `docs/`. Check it with `node test/pages-demo.js <pages-url>`.
-
-## Morning Deck for Friends
-
-A second static app at [`/friends/`](https://watsdr.github.io/morning-deck/friends/) for people who don't run a server or a bot.
-It **runs on each friend's phone, free and private**: settings, tokens, cards, answers and photos stay in that browser
-(localStorage + IndexedDB). There's no server, no account and no analytics. It reuses the same card UI (`public/app.js`): gestures,
-animations, fireworks, the reply sheet with photos, the install pill and the feedback card. A local engine answers the app's
-`/api/*` calls in the browser (`window.MD_API_FETCH`).
-
-* **First open:** a landing screen, then a sample deck (every card marked SAMPLE) right away, with no sign-up.
-* **Make it mine:** name, deck time (snoozed cards return then), gesture words, and a service picker. Each service has a connect step and a
-  **Test & preview** that renders real preview cards.
-* **Daily deck:** cards from connected services, sorted by priority and urgency, always ending with “How could Morning Deck be better?”.
-  That feedback is stored locally and can be shared via the phone's Share sheet or email. No address is hard-coded.
-* **Safety:** a swipe only records your decision on the phone. Per service, **Let swipes act** (off by default) allows simple
-  reversible actions only: complete a task, mark read or archive mail, RSVP. Each comes with Undo. It never sends messages, deletes or buys.
-* **Settings:** edit services, export/import settings (secrets excluded unless you tick the box), **Reset everything**, privacy note.
-
-| Works with no registration | Needs the owner's one-time OAuth registration | Coming soon |
-| --- | --- | --- |
-| Weather (Open-Meteo), News & RSS, My reminders, Calendar link (ICS), Todoist (API token), GitHub (token), Universal inbox (ntfy) | Google Calendar, Gmail, Google Tasks (GIS token model); Outlook mail and calendar, Microsoft To Do (MSAL.js SPA + PKCE) | Notion, Slack, Apple Reminders/Calendar, Spotify, WhatsApp, Strava, Trello, Asana, Linear, Jira, Discord, Instagram/X, Health Connect (each tile says why) |
-
-Third parties, disclosed in the app: feeds that block browsers (no CORS) are fetched through the free **rss2json.com** relay, which friends can
-switch off. The Universal inbox uses **ntfy.sh** with a random private topic: anyone with the topic can read it, messages are kept about
-12 hours, and they aren't end-to-end encrypted. Friends can self-host ntfy. Secret ICS links from Google, Outlook and iCloud usually can't be
-read by a browser app (no CORS), so the app says so and offers Google/Microsoft sign-in, an `.ics` import, or a relay you run yourself.
-
-Owner setup for Google and Microsoft sign-in: [docs/FRIENDS-OWNER-SETUP.md](docs/FRIENDS-OWNER-SETUP.md). The IDs go in `friends/config.js`.
-Source is in `friends/`. `node scripts/build-pages.js` builds `docs/friends/` (it copies `public/app.js`, `styles.css`, fonts and icons,
-and writes a scoped offline service worker). Test with `node test/friends.js <url-of-friends-app> [screenshot-dir]`
-(Playwright, 412×915. Weather and RSS are real. Token APIs, Google/Microsoft and ntfy are mocked.)
+> The bots read their answers back with `GET /api/answers` and act on them on their own.
 
 ## Run
 
 ```bash
 scripts/start.sh               # server only (nohup, pid in run/server.pid, log in logs/server.log)
-scripts/start.sh --tailscale   # server + Tailscale Funnel: permanent https://<hostname>.<your-tailnet>.ts.net
+scripts/start.sh --tailscale   # server + Tailscale Funnel: permanent https://morning-deck.tail164b96.ts.net
 scripts/start.sh --tunnel      # server + Cloudflare quick tunnel (https://<random>.trycloudflare.com); flags combine
 scripts/phone-url.sh           # print the full private phone link (permanent Tailscale URL + token)
 scripts/phone-url.sh --tunnel  # same, but with the current quick-tunnel URL
@@ -117,7 +22,6 @@ node scripts/reset.js --all # wipe all cards + the whole answer log, then seed s
 node scripts/reset.js --empty # wipe everything, no samples
 node test/isolated.js test/e2e.js         # Playwright touch test (5 gestures, undo, fling, feedback card) + screenshots/verify.json
 node test/isolated.js test/e2e-photos.js  # photos on replies, offline queue, keyboard-safe sheet, feedback card, confetti -> verify-photos.json
-node test/isolated.js test/perf.js        # swipe profile (CDP trace, 412x915, 4x CPU throttle): frame times, input->frame latency, long tasks
                             # isolated.js = temp data dir + port 8799; the live data/ and :8787 are never touched
 node test/installability.js [baseUrl]  # Chrome installability + offline check
 node scripts/make-icons.js  # regenerate PNG icons from the SVG artwork
@@ -130,32 +34,33 @@ Config is in `.env` (created by `scripts/init-env.sh`, mode 600, git-ignored):
 `MD_ENV_FILE` points the server at a different env file (the demo uses its own, so it never reads the real token).
 
 Quick-tunnel URLs change every time the tunnel restarts; run `scripts/phone-url.sh --tunnel` to get the new link.
-A Tailscale Funnel URL never changes (see Permanent URL).
+The Tailscale Funnel URL never changes (see below).
 
-## Permanent URL (optional)
+## Tailscale Funnel (permanent URL)
 
-The token is still required on any public URL; without it every page is `401`.
+Public URL: **https://morning-deck.tail164b96.ts.net** (Funnel on port 443 → `http://127.0.0.1:8787`, Let's Encrypt cert managed by tailscaled).
+The token is still required; without it every page is `401`.
 
-**Tailscale Funnel** gives you `https://<hostname>.<your-tailnet>.ts.net`, no domain needed:
-
-* If Tailscale is already installed system-wide, `tailscale funnel --bg 8787` is all you need.
-* Otherwise `scripts/start.sh --tailscale` runs a private `tailscaled` from `bin/` in **userspace-networking** mode (no root/TUN/systemd).
-  Put the static `tailscale` and `tailscaled` binaries from <https://pkgs.tailscale.com/stable/#static> into `bin/`.
-  The first run asks you to log in: `bin/tailscale --socket=run/tailscale/tailscaled.sock up --hostname=morning-deck`, open the printed
-  link, and enable HTTPS + Funnel for your tailnet when the admin console prompts. Then run `scripts/start.sh --tailscale` again.
-  It publishes `127.0.0.1:$MD_PORT` with Funnel and writes the URL to `run/tailscale.url` (used by `scripts/phone-url.sh`).
-* State (node key, certs, Funnel config) lives in `run/tailscale/`. Keep it. `scripts/stop.sh --tailscale` stops `tailscaled`; the config comes back on the next start.
-* After a reboot, run `scripts/start.sh --tailscale` again (or wire it into systemd/cron `@reboot`).
-
-**Named Cloudflare tunnel** (needs a domain on Cloudflare):
-`cloudflared tunnel login`, `cloudflared tunnel create morning-deck`, `cloudflared tunnel route dns morning-deck deck.example.com`,
-then `cloudflared tunnel run --url http://127.0.0.1:8787 morning-deck`.
+* Binaries: `bin/tailscale`, `bin/tailscaled` (official static build 1.102.5 from pkgs.tailscale.com; also symlinked into `/usr/local/bin`).
+* `tailscaled` runs as the `box` user in **userspace-networking** mode (no root/TUN/systemd), detached with `setsid nohup`:
+  ```bash
+  D=/workspace/morning-deck
+  setsid nohup $D/bin/tailscaled --tun=userspace-networking \
+    --statedir=$D/run/tailscale --state=$D/run/tailscale/tailscaled.state \
+    --socket=$D/run/tailscale/tailscaled.sock >> $D/logs/tailscaled.log 2>&1 < /dev/null &
+  ```
+  PID in `run/tailscaled.pid`. State (node key, TLS certs, serve/funnel config) is in `run/tailscale/` (mode 700). Don't delete it, or the node has to log in again.
+* The CLI must be pointed at that socket: `alias ts='bin/tailscale --socket=run/tailscale/tailscaled.sock'`, then
+  `ts status`, `ts funnel status`, `ts funnel --bg 8787` (idempotent), `ts funnel --https=443 off` (unpublish).
+* `scripts/start.sh --tailscale` does all of this: starts tailscaled if it isn't running, checks it's logged in, re-runs `funnel --bg $MD_PORT`, and writes the URL to `run/tailscale.url` (read by `phone-url.sh`).
+* First-time setup on a new box/state: `ts up --hostname=morning-deck` → open the printed `https://login.tailscale.com/a/...` link; Funnel + HTTPS must be enabled for the tailnet in the admin console (the CLI prints the link if they aren't).
+* No container restart hook exists here, so after a box reboot run `scripts/start.sh --tailscale` again.
 
 ## Auth
 
 Everything except `/manifest.webmanifest`, `/icons/*`, and `/favicon.ico` (Chrome fetches those without cookies, and they hold no data) needs the token:
 
-* **Phone / browser:** open `https://<host>/?token=<MD_TOKEN>` once. The server sets an httpOnly, SameSite=Lax cookie (Secure over HTTPS) that lasts a year, then redirects so the token is gone from the address bar. The installed PWA shares Chrome's cookies.
+* **Phone / browser:** open `https://<host>/?token=<MD_TOKEN>` once. The server sets an `HttpOnly; Secure; SameSite=Strict` cookie that lasts a year (Secure works on http://127.0.0.1 too, since browsers treat it as a secure context), then redirects so the token is gone from the address bar. `?token=` only works on pages; `/api/*` takes `Authorization: Bearer` (or the cookie). Strict withholds the cookie on a navigation that starts on another site (a link in chat or email), so that one locked response reloads itself once from the same origin, which does carry the cookie. Data dirs are 700 and data files 600. The installed PWA shares Chrome's cookies.
 * **Bots:** `Authorization: Bearer <MD_TOKEN>`.
 
 Logs redact `?token=`.
@@ -173,11 +78,6 @@ Logs redact `?token=`.
 Per-card `gestures.<dir>` overrides `label`, `value`, `prompt` (tap3), `snooze`, `disabled`.
 If a card sets a label without a value, the value is the slugged label (`"Index fund"` → `index_fund`).
 An overridden `up` snoozes only if its value is `"snooze"` or it sets `snooze: true`.
-
-Swipes feel native at 60-120 Hz: Pointer Events feed a single `requestAnimationFrame` writer (no layout reads per move, only
-`transform`/`opacity`), the card follows from the first pixel, release uses velocity + momentum projection, fly-outs run on the
-compositor (Web Animations) and the answer is recorded right after (optimistic, with the same offline queue and retry), the spring
-back is an exact damped spring (same feel at any refresh rate), the next card is already rendered underneath, and undo is optimistic too.
 
 Desktop fallbacks: on-screen buttons, arrow keys, `Enter`/`r` = reply sheet, `u`/`Backspace`/`Ctrl+Z` = undo, `Esc` closes the sheet.
 Undo marks the answer `undone: true`, appends a `{"gesture":"undo","undoes":"<answerId>"}` entry, and puts the card back as pending.
@@ -240,7 +140,7 @@ mode if it's pointed at `./data` or `./.env`. In demo mode:
   only happens in the browser. `GET /api/answers` is always empty.
 * Photos (`/api/uploads`) and card intake (`POST /api/cards`) are disabled (403).
 
-Env overrides: `DEMO_PORT` (8792), `DEMO_DIR`, `DEMO_NAME`.
+Env overrides: `DEMO_PORT` (8792), `DEMO_DIR`, `DEMO_NAME`. Ports 8790/8791 are taken by a system service on this box.
 
 ## Card intake format
 
@@ -289,6 +189,16 @@ Example card:
 }
 ```
 
+## Installing on your phone
+
+When Chrome says the app is installable, it fires `beforeinstallprompt`. The app keeps that event and shows an **Install app** pill
+next to the cards-left badge; tapping it opens Chrome's install dialog. If the event doesn't arrive within about 4 s (in-app browsers,
+already installed, Chrome's own rules), a smaller **Install** button opens a short help sheet: the Install icon in the address bar,
+⋮ → *Install and create shortcut* / *Add to home screen*, or Share → *Add to home screen*. Inside another app's browser, choose ⋮ → *Open in Chrome* first.
+Nothing is shown when the app already runs installed (`display-mode: standalone`). Each page load also sends a small diagnostics
+beacon (`POST /api/diag`, UA + display/SW flags only) so you can see what the phone's Chrome reports in `logs/diag.log`.
+New releases update themselves: the service worker skips waiting and claims the page, and the page reloads once it's idle.
+
 ## API
 
 | method | path | |
@@ -312,7 +222,7 @@ Answer entry: `{id, cardId, source, sourceId, cardTitle, cardType, sample, gestu
 "attachments": [
   { "id": "upl_2ebbee308973a84a383b", "url": "/api/uploads/upl_2ebbee308973a84a383b", "mime": "image/webp",
     "size": 17544, "width": 1600, "height": 1067,
-    "path": "/path/to/morning-deck/data/uploads/upl_2ebbee308973a84a383b.webp" }
+    "path": "/workspace/morning-deck/data/uploads/upl_2ebbee308973a84a383b.webp" }
 ]
 ```
 
@@ -321,7 +231,7 @@ the Bearer token (`curl -H "Authorization: Bearer $TOKEN" "$BASE/api/uploads/<id
 
 ```bash
 TOKEN=...   # from .env
-BASE=http://127.0.0.1:8787   # or your public https URL
+BASE=http://127.0.0.1:8787   # or https://morning-deck.tail164b96.ts.net
 
 curl -s -X POST "$BASE/api/cards" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -341,14 +251,6 @@ card.schema.json        intake JSON Schema
 public/                 the PWA (index.html, styles.css, app.js, sw.js, manifest.webmanifest, icons/, fonts/ Plus Jakarta Sans OFL)
 scripts/                start/stop/reset/init-env/phone-url, sample-cards.js, make-icons.js
 scripts/demo.sh         public demo instance (MD_DEMO=1, own data dir/env/port/quick tunnel)
-scripts/build-pages.js  builds docs/ (static GitHub Pages demo with the in-browser mock API)
-docs/                   generated static sites: demo at docs/, friends app at docs/friends/ (don't edit by hand; *.md guides are kept)
-docs/FRIENDS-OWNER-SETUP.md  one-time Google Cloud + Microsoft Entra registration for the friends app's sign-in
-friends/                Morning Deck for Friends source: index.html, friends.css, config.js (owner IDs), engine.js (local /api),
-                        services.js (Google/Microsoft auth, calendar cards), parsers.js (ICS, RSS), connectors-*.js, ui.js, ui-setup.js,
-                        auth/ms-redirect.html (MSAL bridge), vendor/msal/ (MSAL.js 5, MIT)
-test/friends.js         Playwright check of the friends app (+ test/friends-mocks.js)
-test/pages-demo.js      Playwright check of the static demo: 5 gestures, undo, feedback card last, cleared screen
 test/install.js         install flow check (real + simulated beforeinstallprompt, help sheet, /api/diag, SW auto-update)
 test/isolated.js        runs a test against a throwaway server (temp MD_DATA_DIR, port 8799, seeded SAMPLE deck)
 test/e2e.js             Playwright (system Chrome) touch-driven test, writes screenshots/ + verify.json
@@ -359,3 +261,33 @@ bin/cloudflared         quick-tunnel binary (git-ignored)
 bin/tailscale(d)        Tailscale CLI + daemon for Funnel (git-ignored)
 run/tailscale/          tailscaled state: node key, certs, funnel config (git-ignored, keep it)
 ```
+
+## 2026-10-19 additions
+
+* **Watchdog** (`scripts/funnel-watchdog.sh`, pid in `run/watchdog.pid`, log `logs/watchdog.log`): checks the public
+  manifest without the token every 20 s; 200 and 401 are healthy. Restarts tailscaled when 4 of the last 8 checks failed or
+  3 in a row, then re-runs `funnel --bg 8787` and re-adds `/hub-world -> 8796` if it's missing. 10-minute cooldown between
+  restarts. Single instance (flock `run/watchdog.lock`); `--once` does one check into the same rolling window
+  (`run/watchdog.window`); hung `--once` runs older than 2 min are killed. Also restarts `server.js` if localhost stops answering.
+  Tunables: `WD_WINDOW`, `WD_FAILS_IN_WINDOW`, `WD_FAILS_IN_ROW`, `WD_COOLDOWN`, `WD_INTERVAL`.
+* **Off-box backup mirror:** every save also writes the daily `cards-`/`answers-YYYY-MM-DD.json` to the persistent agent
+  store `/cursor/stores/store-32b0f9fc-e45e-41a6-b51c-6bded31ff871/morning-deck-backups/` (outside `/workspace`), keeping 30
+  days. On only for the live `./data`; `MD_BACKUP_MIRROR_DIR` overrides it (empty = off). The store is a FUSE mount that
+  refuses chmod (files show 666); access is controlled by the store itself. The startup queue warning uses the newest backup
+  in either place. Test: `node test/isolated.js test/backup-mirror.js --empty`.
+* **Android app (TWA) carries no token** (since v1.1.0). It opens `https://morning-deck.tail164b96.ts.net/?source=twa` and uses
+  Chrome's sign-in cookie, so open the private `?token=` link once in Chrome on the phone. Token rotations no longer need a new APK.
+  Rebuild: `node ../morning-deck-android/gen.js`, then gradle `assembleRelease` + zipalign + apksigner with `run/android/morningdeck.keystore`.
+* **Bots:** see [`docs/BOT-API.md`](docs/BOT-API.md) (card schema, gestures, `replyTo.agentId/ownerBot/writeBack`, answers).
+* **Notify me (Web Push):** Settings (sliders icon in the header) → *Notify me* subscribes the device. VAPID keys are in `.env`
+  (`scripts/init-vapid.sh`, mode 600); subscriptions in `data/push.json` (600). Uses the `web-push` npm package.
+  `POST /api/notify` (Bearer only) sends "Your Morning Deck is ready: N cards" to every subscribed device if N (pending bot
+  cards) > 0; otherwise `{sent:0, skipped:"nothing pending"}`. `?dryRun=1` shows the message without sending. Expired
+  subscriptions (404/410) are dropped. Other routes: `GET /api/push/key`, `POST /api/push/subscribe {subscription}`,
+  `POST /api/push/unsubscribe {endpoint}`, `GET /api/push/status`. The push goes through the browser's push service (FCM for
+  Chrome); the payload only holds the count.
+* **History:** Settings → *History* lists past answers (from `GET /api/answers?all=1`), newest first: card title, bot, choice,
+  time in ET, reply text; undone answers are struck through and marked *Undone*.
+* **Theme:** Settings → Theme (Dark default, Light). Stored per device in `localStorage`.
+* **Reply = ask the bot:** the triple-tap sheet now reads "Reply or ask <bot> a question" so Derek can ask for more info.
+* Tests: `test/features.js` (routing fields, push/notify, History, wording, theme), `test/screens.js` (390x844 screenshots to `run/screens-<date>/`).

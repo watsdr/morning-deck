@@ -13,6 +13,7 @@
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="preload" href="/fonts/jakarta.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/styles.css">
+  <script>try{if(localStorage.getItem("md_theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
 </head>
 <body>
   <div class="sky" aria-hidden="true">
@@ -30,6 +31,12 @@
       </div>
       <button class="install-btn" id="installBtn" type="button" hidden aria-label="Install Morning Deck">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10m0 0-4-4m4 4 4-4M6 19h12"/></svg><span>Install app</span>
+      </button>
+      <button class="icon-btn" id="insightsBtn" type="button" aria-label="Insights">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg>
+      </button>
+      <button class="icon-btn" id="settingsBtn" type="button" aria-label="Settings and history">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
       </button>
       <div class="counter" id="counter" aria-live="polite"><span id="countNum">0</span><small>left</small></div>
     </header>
@@ -100,6 +107,56 @@
     </section>
   </div>
 
+  <div class="panel-wrap" id="settingsWrap" hidden>
+    <div class="panel-backdrop" data-close="settings"></div>
+    <section class="panel" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="panel-head"><h3 id="settingsTitle">Settings</h3><button type="button" class="panel-x" data-close="settings" aria-label="Close settings">✕</button></div>
+      <div class="set-list">
+        <button type="button" class="set-row" id="historyBtn">
+          <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></span>
+          <span class="set-txt"><b>History</b><small>Your past answers, newest first</small></span><span class="set-chev" aria-hidden="true">›</span>
+        </button>
+        <button type="button" class="set-row" id="insightsRowBtn">
+          <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg></span>
+          <span class="set-txt"><b>Insights</b><small>What keeps getting skipped, what's due</small></span><span class="set-chev" aria-hidden="true">›</span>
+        </button>
+        <label class="set-row" for="notifyToggle">
+          <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15Z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></span>
+          <span class="set-txt"><b>Notify me</b><small id="notifyHint">A morning ping when cards are waiting</small></span>
+          <input type="checkbox" class="switch" id="notifyToggle" role="switch">
+        </label>
+        <div class="set-row set-theme">
+          <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z"/></svg></span>
+          <span class="set-txt"><b>Theme</b></span>
+          <div class="seg" role="radiogroup" aria-label="Theme">
+            <button type="button" role="radio" data-theme-opt="dark">Dark</button><button type="button" role="radio" data-theme-opt="light">Light</button>
+          </div>
+        </div>
+      </div>
+      <p class="panel-note">Notifications only say how many cards are waiting. Swipes still only record your answer.</p>
+    </section>
+  </div>
+
+  <div class="panel-wrap" id="historyWrap" hidden>
+    <div class="panel-backdrop" data-close="history"></div>
+    <section class="panel panel-tall" id="historyPanel" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="panel-head"><h3 id="historyTitle">History</h3><button type="button" class="panel-x" data-close="history" aria-label="Close history">✕</button></div>
+      <p class="panel-sub" id="historySub">Loading…</p>
+      <ol class="hist-list" id="historyList"></ol>
+    </section>
+  </div>
+
+  <div class="panel-wrap" id="insightsWrap" hidden>
+    <div class="panel-backdrop" data-close="insights"></div>
+    <section class="panel panel-tall" id="insightsPanel" role="dialog" aria-modal="true" aria-labelledby="insightsTitle">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="panel-head"><h3 id="insightsTitle">Insights</h3><button type="button" class="panel-x" data-close="insights" aria-label="Close insights">✕</button></div>
+      <div class="ins-scroll" id="insightsBody"><p class="panel-sub">Loading…</p></div>
+    </section>
+  </div>
+
   <div class="sheet-wrap" id="sheetWrap" hidden>
     <div class="sheet-backdrop" id="sheetBackdrop"></div>
     <section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
@@ -126,7 +183,7 @@
           <button type="button" class="ghost-btn" id="sheetCancel">Cancel</button>
           <button type="button" class="primary-btn" id="sheetSave" disabled>Save reply</button>
         </div>
-        <p class="sheet-note">Saving records your reply. Nothing is sent from here.</p>
+        <p class="sheet-note" id="sheetNote">Saving records your reply. Nothing is sent from here.</p>
       </div>
     </section>
   </div>

@@ -4,7 +4,7 @@
 (() => {
   'use strict';
   const $ = (s, r = document) => r.querySelector(s);
-  const TZ = window.MD_TZ || 'America/New_York'; // the friends app sets the device's own time zone
+  const TZ = 'America/New_York';
   const DIRS = ['right', 'left', 'up', 'down'];
   const COLORS = { right: '#19c37d', left: '#ff4f6d', up: '#ffaa1f', down: '#8b7cf6', tap3: '#38b6ff', undo: '#b08b2e' };
   const ICONS = {
@@ -69,7 +69,7 @@
   async function loadConfig() {
     try {
       const c = await api('/api/config');
-      Object.assign(config, { demo: !!c.demo, uploads: c.uploads !== false, greetingName: c.greetingName || '', clearedNote: c.clearedNote || '', snoozeNote: c.snoozeNote });
+      Object.assign(config, { demo: !!c.demo, uploads: c.uploads !== false, greetingName: c.greetingName || '' });
       try { localStorage.setItem(NAME_KEY, config.greetingName); } catch (_) {}
     } catch (_) { /* older server or offline: keep cached values */ }
     greeting();
@@ -97,9 +97,7 @@
   // One code path: the app always talks to /api/*. Normally that's the server; in the static demo (GitHub Pages,
   // window.MD_STATIC_DEMO, or ?demo=static) an in-browser mock answers instead. Nothing else changes.
   const STATIC_DEMO = window.MD_STATIC_DEMO === true || /\.github\.io$/i.test(location.hostname) || new URLSearchParams(location.search).get('demo') === 'static';
-  // window.MD_API_FETCH: a page can plug in its own /api/* implementation (the friends app answers from this browser's storage).
-  const LOCAL_API = typeof window.MD_API_FETCH === 'function';
-  const rawFetch = LOCAL_API ? window.MD_API_FETCH : STATIC_DEMO ? mockApi() : (path, opts) => fetch(path, opts);
+  const rawFetch = STATIC_DEMO ? mockApi() : (path, opts) => fetch(path, opts);
   let inflight = 0; // API calls in progress; an app update waits for these before reloading
   const apiFetch = (path, opts) => { inflight++; return Promise.resolve().then(() => rawFetch(path, opts)).finally(() => { inflight--; }); };
   function mockApi() {
@@ -223,7 +221,7 @@
     try {
       const data = await api('/api/deck');
       const queued = new Set([...outbox(), ...(await idb.all()).map((it) => it.payload)].map((p) => p.cardId));
-      state.deck = data.cards.filter((c) => !queued.has(c.id));
+      state.deck = foldDeck(data.cards.filter((c) => !queued.has(c.id)));
       state.loaded = true;
       if (!state.session.length && !state.deck.length) loadTodaySummary();
       render({ deal: initial });
@@ -231,6 +229,41 @@
       if (e.status === 401) return;
       state.loaded = true; setStatus('Offline · showing nothing new'); render();
     }
+  }
+  // Above-the-fold ordering (scripts/assemble.js sets card.rank + card.aboveFold). aboveFold cards first, in rank order,
+  // then a 'More (N)' divider card; the rest stay hidden in state.belowFold until the divider is tapped.
+  // No card with aboveFold set: the server's order, unchanged.
+  const DIVIDER_ID = 'md-more-divider';
+  function foldDeck(cards) {
+    state.belowFold = [];
+    if (state.foldOpen || !cards.some((c) => c.aboveFold === true)) return cards;
+    const byRank = (a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity);
+    const top = cards.filter((c) => c.aboveFold === true).sort(byRank);
+    const rest = cards.filter((c) => c.aboveFold !== true);
+    const restSorted = [...rest.filter((c) => !c.builtin).sort(byRank), ...rest.filter((c) => c.builtin)];
+    if (!restSorted.length) return top;
+    state.belowFold = restSorted;
+    return [...top, { id: DIVIDER_ID, divider: true, count: restSorted.length, title: `More (${restSorted.length})`, source: 'Morning Deck' }];
+  }
+  function openFold() {
+    const i = state.deck.findIndex((c) => c.divider);
+    if (i < 0) return;
+    state.foldOpen = true;
+    state.deck.splice(i, 1, ...(state.belowFold || []));
+    state.belowFold = [];
+    const n = el.stack.querySelector(`.card[data-id="${DIVIDER_ID}"]`); if (n) n.remove();
+    render({ deal: true });
+  }
+  function buildDivider(card) {
+    const node = h('article', { class: 'card card-divider', 'data-id': card.id, 'data-type': 'divider', role: 'button', tabindex: '0', 'aria-label': `More cards: ${card.count}. Tap to show them.` },
+      h('div', { class: 'divider-inner' },
+        h('div', { class: 'divider-emoji', 'aria-hidden': 'true' }, '🗂️'),
+        h('h2', {}, `More (${card.count})`),
+        h('p', { class: 'body' }, 'That’s the top 5. Tap to see the rest of today’s cards.'),
+        h('span', { class: 'chip' }, 'Tap to show')));
+    node.addEventListener('click', openFold);
+    node.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFold(); } });
+    return node;
   }
   async function loadTodaySummary() {
     try {
@@ -245,6 +278,7 @@
 
   // ---------- card DOM ----------
   function buildCard(card) {
+    if (card.divider) return buildDivider(card);
     const g = card.gestures;
     const accent = card.color || '#7c6cf2';
     const node = h('article', { class: 'card', 'data-id': card.id, 'data-type': card.type, 'data-builtin': card.builtin ? '1' : null, style: `--accent:${accent}`, 'aria-label': `${card.source}: ${card.title}` });
@@ -252,11 +286,11 @@
     if (card.sample) node.append(h('div', { class: 'ribbon', title: 'Example data, not a real request' }, 'SAMPLE'));
     node.append(h('header', { class: 'card-head' },
       h('div', { class: 'avatar' }, card.emoji || '🤖'),
-      h('div', { class: 'who' }, h('div', { class: 'bot' }, card.source), h('div', { class: 'meta' }, card.builtin ? 'Your daily check-in · last card' : (card.meta || fmtTime(card.createdAt)) + (card.sample ? ' · sample' : '')))));
+      h('div', { class: 'who' }, h('div', { class: 'bot' }, card.source), h('div', { class: 'meta' }, card.builtin ? 'Your daily check-in · last card' : fmtTime(card.createdAt) + (card.sample ? ' · sample' : '')))));
     node.append(card.builtin
       ? h('div', { class: 'chips' }, h('span', { class: 'chip' }, 'Feedback'), h('span', { class: 'chip chip-soft' }, '1 minute'))
       : h('div', { class: 'chips' },
-        h('span', { class: 'chip' }, card.chip || TYPE_LABEL[card.type] || card.type),
+        h('span', { class: 'chip' }, TYPE_LABEL[card.type] || card.type),
         h('span', { class: `chip prio-${card.priority}` }, card.priority === 'high' ? 'High priority' : card.priority === 'low' ? 'Low' : 'Normal'),
         ...((a) => (a ? [h('span', { class: `chip ${a.cls}` }, a.text)] : []))(ageChip(card))));
     node.append(h('h2', {}, card.title));
@@ -350,7 +384,7 @@
     t3.disabled = !g; if (t3s.textContent !== t3l) t3s.textContent = t3l;
     el.undo.disabled = !state.history.length;
     // counters
-    const n = state.deck.length;
+    const n = state.deck.filter((c) => !c.divider).length + ((state.belowFold && state.belowFold.length) || 0);
     if (el.count.textContent !== String(n)) {
       el.count.textContent = n;
       if (!reduced() && el.count.animate) el.count.animate([{ scale: 1 }, { scale: 1.35, offset: 0.4 }, { scale: 1 }], { duration: 450, easing: 'cubic-bezier(.2, 1.35, .35, 1)' }); // compositor bump, no forced reflow
@@ -371,7 +405,7 @@
     const list = state.session.length ? state.session.map((e) => ({ card: e.card, gesture: e.gesture, label: e.card.gestures[e.gesture].label, text: e.payload.text, pics: e.photos.length }))
       : (state.todayAnswers || []).map((a) => ({ card: { title: a.cardTitle, source: a.source, emoji: a.builtin ? '🌅' : '' }, gesture: a.gesture, label: a.label, text: a.text, pics: (a.attachments || []).length }));
     $('#clearedSub').textContent = list.length
-      ? `You cleared ${list.length} card${list.length > 1 ? 's' : ''}${state.session.length ? '' : ' today'}. ${config.clearedNote || (config.demo ? 'This is a demo, so nothing was saved. Reload for a fresh deck.' : 'Your bots will pick up your answers.')}`
+      ? `You cleared ${list.length} card${list.length > 1 ? 's' : ''}${state.session.length ? '' : ' today'}. ${config.demo ? 'This is a demo, so nothing was saved. Reload for a fresh deck.' : 'Your bots will pick up your answers.'}`
       : 'Nothing waiting on you right now. Enjoy your coffee ☕';
     const chips = $('#summaryChips'); chips.innerHTML = '';
     const snoozed = (x) => x.gesture === 'up' && (x.card.gestures ? x.card.gestures.up.snooze : x.label === 'Later');
@@ -389,12 +423,25 @@
     if (celebrate) confetti();
   }
 
+  // 401 from /api/*: full-screen "Sign in again" overlay (markup + CSS + form script come from GET /signin, the same
+  // page the server shows on a locked page load). The cached deck stays underneath; no spinner, no retry loop.
   function showLocked() {
+    if (state.locked) return;
     state.locked = true;
-    el.stack.innerHTML = '';
-    el.cleared.hidden = false;
-    el.cleared.innerHTML = '<div class="sunrise"><div class="sun"></div><div class="horizon"></div></div><h2>Locked</h2><p class="cleared-sub">Open Morning Deck with your private link (ending in <code>?token=…</code>) to sign this device in.</p>';
+    stopSpinner();
+    const fallback = '<!doctype html><style>.md-lock{position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;background:#1b1440;color:#fff;text-align:center;font-family:system-ui,sans-serif;padding:24px}</style><div class="md-lock"><div class="in"><h1>Sign in again</h1><p>Open your private sign-in link (the one ending in <code>?token=…</code>) on this device.</p></div></div>';
+    fetch('/signin', { cache: 'no-store', credentials: 'same-origin' }).then((r) => r.ok ? r.text() : fallback).catch(() => fallback).then((html) => {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const lock = doc.querySelector('.md-lock'); if (!lock || document.querySelector('.md-lock')) return;
+      doc.querySelectorAll('style').forEach((st) => document.head.append(st));
+      lock.classList.add('over');
+      document.body.append(lock);
+      document.documentElement.style.overflow = 'hidden';
+      doc.querySelectorAll('body script').forEach((sc) => { const n = document.createElement('script'); n.textContent = sc.textContent; document.body.append(n); });
+      const ta = lock.querySelector('textarea'); if (ta) ta.focus({ preventScroll: true });
+    });
   }
+  function stopSpinner() { try { document.querySelectorAll('.spinner,.loading').forEach((n) => n.remove()); } catch (_) {} }
 
   // ---------- drag physics ----------
   // Pointer Events feed ONE requestAnimationFrame writer: pointermove only records the latest point (no DOM reads or
@@ -501,7 +548,7 @@
 
   function onDown(e) {
     const node = e.currentTarget;
-    if (node.dataset.depth !== '0' || node.classList.contains('flying') || state.busy || state.sheetCard) return;
+    if (node.dataset.depth !== '0' || node.classList.contains('flying') || state.busy || state.sheetCard || panels.open()) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (topAnim) { topAnim.cancel(); topAnim = null; }
     try { node.setPointerCapture(e.pointerId); } catch (_) {}
@@ -674,6 +721,7 @@
   function swipe(dir, opts = {}) {
     const node = el.stack.querySelector('.card[data-depth="0"]:not(.flying)');
     const card = node && topCardData(node);
+    if (card && card.divider) return; // the More divider is tapped, not swiped
     if (!card || (card.gestures[dir] || {}).disabled || state.busy) return;
     if (card.gestures[dir].reply && !opts.fromSheet) return openSheet(card, { gesture: dir });
     flash(dir);
@@ -732,6 +780,7 @@
   // ---------- sheet ----------
   // mode = which gesture Save records: 'tap3' (custom reply) or a direction flagged `reply` (e.g. "Something's off").
   function openSheet(card, { gesture = 'tap3', text = '', photos = [] } = {}) {
+    if (card && card.divider) return openFold();
     if (!card) return;
     state.sheetCard = card; state.sheetOpenedAt = performance.now();
     const bot = $('#sheetBot'); bot.innerHTML = '';
@@ -740,11 +789,6 @@
     $('#sheetTitle').textContent = card.title;
     $('#sheetBody').textContent = card.body || '';
     $('#sheetDetails').textContent = card.details || '';
-    // optional card.link (http/https only): an "Open" button in the sheet
-    let link = $('#sheetLink');
-    if (!link) { link = h('a', { id: 'sheetLink', class: 'sheet-link', target: '_blank', rel: 'noopener noreferrer' }); $('#sheetDetails').after(link); }
-    const safeLink = typeof card.link === 'string' && /^https?:\/\//i.test(card.link) ? card.link : '';
-    link.hidden = !safeLink; link.href = safeLink || '#'; link.textContent = card.linkLabel || 'Open ↗';
     el.sheetScroll.scrollTop = 0;
     el.reply.value = text;
     clearPhotos();
@@ -770,8 +814,12 @@
       });
       quick.append(b);
     }
-    $('#replyLabel').textContent = g.prompt || (state.sheetGesture === 'tap3' ? 'Your reply' : `${g.label}: add a note`);
-    el.reply.placeholder = state.sheetGesture === 'tap3' ? (card.builtin ? 'Ideas, bugs, wishes… or just add a photo' : 'Type your answer…') : 'Optional: what happened?';
+    // Triple-tap / Reply on a bot card: make it obvious this is also how to ask the bot a question back.
+    const askBot = state.sheetGesture === 'tap3' && !card.builtin;
+    const botPrompt = card.rawGestures && card.rawGestures.tap3 && card.rawGestures.tap3.prompt;
+    $('#replyLabel').textContent = askBot ? (botPrompt || `Reply or ask ${card.source || 'the bot'} a question`) : g.prompt || (askBot ? `Reply or ask ${card.source || 'the bot'} a question` : state.sheetGesture === 'tap3' ? 'Your reply' : `${g.label}: add a note`);
+    el.reply.placeholder = state.sheetGesture === 'tap3' ? (card.builtin ? 'Ideas, bugs, wishes… or just add a photo' : 'Type your answer, or ask for more info…') : 'Optional: what happened?';
+    $('#sheetNote').textContent = askBot ? `Saving records your reply for ${card.source || 'the bot'} to pick up. Nothing is sent from here.` : 'Saving records your reply. Nothing is sent from here.';
     el.sheetWrap.dataset.mode = state.sheetGesture;
     el.sheetWrap.style.setProperty('--mode-c', COLORS[state.sheetGesture]);
     updateSave();
@@ -943,7 +991,7 @@
     state.history.push(entry); state.session.push(entry);
     const pics = photos.length ? ` · ${photos.length} photo${photos.length > 1 ? 's' : ''}` : '';
     const label = gesture === 'tap3' ? (card.builtin ? 'Thanks! Suggestion saved' : 'Reply saved') : card.builtin && gesture === 'right' ? 'Love it · thanks!' : g.label;
-    toast(`${label}${card.builtin ? '' : ` · ${card.source}`}${pics}${gesture === 'up' && g.snooze !== false ? (config.snoozeNote != null ? config.snoozeNote : ' · back tomorrow 6 AM') : ''}`, COLORS[gesture], 4000, { label: 'Undo', aria: `Undo answer to ${card.title}`, run: () => { if (state.history[state.history.length - 1] === entry) undo(); } });
+    toast(`${label}${card.builtin ? '' : ` · ${card.source}`}${pics}${gesture === 'up' ? ' · back tomorrow 6 AM' : ''}`, COLORS[gesture], 4000, { label: 'Undo', aria: `Undo answer to ${card.title}`, run: () => { if (state.history[state.history.length - 1] === entry) undo(); } });
     buzz(gesture === 'right' ? [10, 40, 18] : gesture === 'left' ? 22 : 12); // distinct feel per answer
     // Optimistic: the card is already gone on screen; the network catches up. If this card's undo is still syncing,
     // wait for it so the server sees undo -> new answer in order.
@@ -1077,6 +1125,7 @@
   // ---------- wiring ----------
   document.querySelectorAll('.act[data-g]').forEach((b) => b.addEventListener('click', () => {
     const g = b.dataset.g;
+    if (state.deck[0] && state.deck[0].divider) return openFold();
     if (g === 'tap3') return openSheet(state.deck[0]);
     swipe(g);
   }));
@@ -1092,8 +1141,8 @@
   el.reply.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveReply(); });
   document.addEventListener('keydown', (e) => {
     if (state.sheetCard) { if (e.key === 'Escape') closeSheet(); return; }
-    if (document.documentElement.hasAttribute('data-overlay')) return; // a page overlay (e.g. friends settings) has the keyboard
-    if (e.target.closest && e.target.closest('textarea,input,select')) return;
+    if (panels.open()) { if (e.key === 'Escape') panels.closeTop(); return; }
+    if (e.target.closest && e.target.closest('textarea,input')) return;
     const map = { ArrowRight: 'right', ArrowLeft: 'left', ArrowUp: 'up', ArrowDown: 'down' };
     if (map[e.key]) { e.preventDefault(); swipe(map[e.key]); }
     else if (e.key === 'Enter' || e.key === 'r') { e.preventDefault(); openSheet(state.deck[0]); }
@@ -1117,9 +1166,10 @@
   const isStandalone = () => displayMode() !== 'browser' || navigator.standalone === true;
   const install = { deferred: null, bipFired: false, installed: false };
   function diag(event, extra = {}) {
-    if (STATIC_DEMO || LOCAL_API) return; // no backend on the static demo or the friends app
+    if (STATIC_DEMO) return; // no backend on the static demo
     const body = { ua: navigator.userAgent, displayMode: displayMode(), bipFired: install.bipFired, swControlled: !!(navigator.serviceWorker && navigator.serviceWorker.controller),
-      standalone: isStandalone(), installed: install.installed, ts: new Date().toISOString(), event, path: location.pathname, ...extra };
+      standalone: isStandalone(), installed: install.installed, bipSupported: 'BeforeInstallPromptEvent' in window, secs: Math.round(performance.now() / 1000),
+      ts: new Date().toISOString(), event, path: location.pathname, ...extra };
     fetch('/api/diag', { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
   }
   const installBtn = $('#installBtn'), installWrap = $('#installWrap');
@@ -1227,6 +1277,212 @@
     if (!install.bipFired && !isStandalone() && !state.locked) showInstall('help');
     install.loadSent = true; if (!state.locked) diag('load');
   }, 4000);
+  // Chrome may only fire beforeinstallprompt after ~30s of engagement: report again at 45s if the page is still open
+  setTimeout(() => { if (!state.locked && !document.hidden && !install.bipFired && !isStandalone()) diag('t45'); }, 45000);
+
+
+  // ---------- settings: theme, Notify me, History ----------
+  const THEME_KEY = 'md_theme';
+  function applyTheme(t) {
+    const light = t === 'light';
+    if (light) document.documentElement.dataset.theme = 'light'; else delete document.documentElement.dataset.theme;
+    const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = light ? '#f6e9f2' : '#1d1442';
+    document.querySelectorAll('[data-theme-opt]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.themeOpt === (light ? 'light' : 'dark'))));
+  }
+  const currentTheme = () => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+  document.querySelectorAll('[data-theme-opt]').forEach((b) => b.addEventListener('click', () => {
+    const t = b.dataset.themeOpt; try { localStorage.setItem(THEME_KEY, t); } catch (_) {} applyTheme(t);
+  }));
+  applyTheme(currentTheme());
+
+  const panels = {
+    settings: $('#settingsWrap'), history: $('#historyWrap'), insights: $('#insightsWrap'),
+    open() { return !this.settings.hidden || !this.history.hidden || !this.insights.hidden; },
+    show(name) { this[name].hidden = false; const x = this[name].querySelector('.panel-x'); if (x) x.focus({ preventScroll: true }); },
+    close(name) { this[name].hidden = true; },
+    closeTop() { if (!this.insights.hidden) this.close('insights'); else if (!this.history.hidden) this.close('history'); else this.close('settings'); },
+  };
+  document.querySelectorAll('[data-close]').forEach((n) => n.addEventListener('click', () => panels.close(n.dataset.close)));
+  $('#settingsBtn').addEventListener('click', () => { panels.show('settings'); refreshNotify(); });
+  $('#historyBtn').addEventListener('click', () => { panels.show('history'); loadHistory(); });
+  $('#insightsBtn').addEventListener('click', () => { panels.show('insights'); loadInsights(); });
+  $('#insightsRowBtn').addEventListener('click', () => { panels.show('insights'); loadInsights(); });
+
+  // ---------- Insights: GET /api/insights (read-only). Hand-built SVG, no chart library. ----------
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const sv = (tag, attrs = {}, ...kids) => { const n = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, v); for (const k of kids) if (k != null) n.append(k.nodeType ? k : document.createTextNode(String(k))); return n; };
+  const SERIES = [['answered', COLORS.right, 'Answered'], ['skipped', COLORS.down, 'Skipped'], ['snoozed', COLORS.up, 'Snoozed'], ['new', COLORS.tap3, 'New']];
+  const shortDay = (d) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'numeric', day: 'numeric' });
+  function dueText(r, now = Date.now()) {
+    if (!r.expiresAt) return 'No due date';
+    const ms = Date.parse(r.expiresAt) - now, d = new Date(r.expiresAt);
+    const when = d.toLocaleDateString('en-US', { timeZone: TZ, month: 'short', day: 'numeric' }) + ', ' + d.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }) + ' ET';
+    if (ms <= 0) { const hrs = Math.round(-ms / 3600e3); return `Overdue ${hrs < 24 ? hrs + 'h' : Math.round(hrs / 24) + 'd'} · ${when}`; }
+    if (ms < 48 * 3600e3) return `Due in ${Math.max(1, Math.round(ms / 3600e3))}h · ${when}`;
+    return `Due ${when}`;
+  }
+  function dayChart(series) {
+    const W = 340, H = 132, pad = 18, bw = (W - 8) / series.length, max = Math.max(1, ...series.map((d) => d.answered + d.skipped + d.snoozed + d.new));
+    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'ins-chart', role: 'img', 'aria-label': 'Cards per day, last 14 days' });
+    const defs = sv('defs', {}, sv('pattern', { id: 'insHatch', width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, sv('line', { x1: 0, y1: 0, x2: 0, y2: 6, class: 'ins-hatch' })));
+    svg.append(defs, sv('line', { x1: 0, x2: W, y1: H - pad, y2: H - pad, class: 'ins-axis' }));
+    series.forEach((d, i) => {
+      const x = 4 + i * bw + 2, w = bw - 4;
+      if (!d.covered) { svg.append(sv('rect', { x, y: 8, width: w, height: H - pad - 8, rx: 3, fill: 'url(#insHatch)', class: 'ins-nodata' }, sv('title', {}, `${d.date}: no records`))); }
+      else {
+        let y = H - pad;
+        for (const [k, c] of SERIES) { const v = d[k]; if (!v) continue; const hgt = (v / max) * (H - pad - 14); y -= hgt; svg.append(sv('rect', { x, y, width: w, height: Math.max(1.5, hgt), rx: 2, fill: c }, sv('title', {}, `${d.date}: ${v} ${k}`))); }
+        if (y === H - pad) svg.append(sv('rect', { x, y: H - pad - 2, width: w, height: 2, rx: 1, class: 'ins-zero' }));
+      }
+      if (i % 2 === series.length % 2 || i === series.length - 1) svg.append(sv('text', { x: x + w / 2, y: H - 4, 'text-anchor': 'middle', class: 'ins-tick' }, i === series.length - 1 ? 'Today' : shortDay(d.date)));
+    });
+    return svg;
+  }
+  function strip(cells) {
+    const shown = cells.slice(-14), n = shown.length;
+    const svg = sv('svg', { viewBox: `0 0 ${n * 7} 8`, class: 'ins-strip', 'aria-hidden': 'true', preserveAspectRatio: 'none' });
+    shown.forEach((c, i) => svg.append(sv('rect', { x: i * 7, y: 0, width: 6, height: 8, rx: 1.5, class: c == null ? 's-na' : c === 2 ? 's-hot' : c === 1 ? 's-on' : 's-off' })));
+    return svg;
+  }
+  function jumpToCard(id) {
+    const i = state.deck.findIndex((c) => c.id === id);
+    if (i < 0) return false;
+    const [c] = state.deck.splice(i, 1); state.deck.unshift(c);
+    panels.close('insights'); panels.close('settings'); render(); toast(`Jumped to: ${c.title.slice(0, 40)}`, '#fff', 1600);
+    return true;
+  }
+  function insRow(r, maxScore) {
+    const li = h('li', { class: `ins-row${r.overdue ? ' is-overdue' : r.dueSoon ? ' is-soon' : ''}`, 'data-card': r.id, tabindex: '0', role: 'button', 'aria-expanded': 'false' },
+      h('div', { class: 'ins-row-top' },
+        h('span', { class: 'ins-emoji', style: `--accent:${r.color || '#7c6cf2'}` }, r.emoji || '🤖'),
+        h('div', { class: 'ins-row-main' },
+          h('div', { class: 'ins-row-title' }, r.title),
+          h('div', { class: 'ins-row-meta' }, h('span', { class: 'ins-src' }, r.source || 'Unknown bot'), h('span', { class: 'ins-due' + (r.overdue ? ' over' : r.dueSoon ? ' soon' : '') }, dueText(r)))),
+        h('div', { class: 'ins-row-nums' }, h('b', {}, `${r.daysPending}d`), h('small', {}, `${r.skips}× skip · ${r.snoozes}× later`))),
+      h('div', { class: 'ins-row-bars' },
+        h('div', { class: 'ins-bar' }, h('i', { style: `width:${Math.max(4, Math.round((r.score / maxScore) * 100))}%` })),
+        strip(r.strip)),
+      h('div', { class: 'ins-detail', hidden: true },
+        h('p', { class: 'ins-state' }, r.status === 'pending' ? 'In today\u2019s deck' : r.status === 'snoozed' ? `Snoozed until ${etStamp(r.snoozedUntil)}` : 'Expired without an answer (no longer in the deck)'),
+        r.body ? h('p', {}, r.body) : null, r.details ? h('p', { class: 'ins-details' }, r.details) : null));
+    const act = () => {
+      if (r.inDeck && jumpToCard(r.id)) return;
+      const d = li.querySelector('.ins-detail'); d.hidden = !d.hidden; li.setAttribute('aria-expanded', String(!d.hidden));
+    };
+    li.addEventListener('click', act);
+    li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } });
+    return li;
+  }
+  function section(title, sub, ...kids) { return h('section', { class: 'ins-sec' }, h('div', { class: 'ins-sec-head' }, h('h4', {}, title), sub ? h('small', {}, sub) : null), ...kids); }
+  async function loadInsights() {
+    const body = $('#insightsBody');
+    let data;
+    try { data = await api('/api/insights'); } catch (e) { body.innerHTML = ''; body.append(h('p', { class: 'panel-sub' }, e.status === 401 ? 'Signed out.' : 'Could not load insights (offline?)')); return; }
+    state.insights = data;
+    const s = data.summary, frag = document.createDocumentFragment();
+    const tile = (n, l, cls = '') => h('div', { class: 'ins-tile ' + cls }, h('b', {}, n), h('small', {}, l));
+    frag.append(h('div', { class: 'ins-tiles' },
+      tile(s.pending, 'Pending', s.pending ? '' : 'ok'),
+      tile(s.oldestPendingDays == null ? '–' : `${s.oldestPendingDays}d`, 'Oldest pending'),
+      tile(s.clearedStreak, s.clearedStreak === 1 ? 'Day cleared' : 'Days cleared', s.clearedStreak ? 'ok' : ''),
+      tile(s.overdue + s.dueSoon, 'Overdue / due soon', s.overdue ? 'warn' : '')));
+    if (data.demo) frag.append(h('p', { class: 'ins-note' }, 'Demo: SAMPLE cards only, no history is kept.'));
+
+    const att = data.attention.slice(0, 12), maxScore = Math.max(1, ...att.map((r) => r.score));
+    const anyTouched = data.attention.some((r) => r.skips || r.snoozes);
+    frag.append(section('Needs attention', anyTouched ? 'Ranked by skips/snoozes and days pending' : 'No skips or snoozes recorded yet · ranked by days pending and due date',
+      att.length ? h('ol', { class: 'ins-list' }, att.map((r) => insRow(r, maxScore))) : h('p', { class: 'ins-empty' }, 'Nothing waiting. Deck is clear.'),
+      att.length ? h('p', { class: 'ins-legend' }, h('i', { class: 's-on' }), 'pending that day', h('i', { class: 's-hot' }), 'skipped/snoozed', h('i', { class: 's-na' }), 'no record') : null));
+
+    const hasActivity = data.series.some((d) => d.covered && (d.answered || d.skipped || d.snoozed || d.new));
+    const firstDay = data.history.start ? shortDay(data.history.start) : null;
+    frag.append(section('Last 14 days', firstDay ? `Records start ${firstDay}${data.history.start >= '2026-10-17' ? ' (older history was lost Oct 17)' : ''}` : 'No records yet',
+      hasActivity ? dayChart(data.series) : h('p', { class: 'ins-empty' }, 'No activity recorded in the last 14 days.'),
+      hasActivity ? h('div', { class: 'ins-keys' }, SERIES.map(([, c, l]) => h('span', { style: `--c:${c}` }, l)), h('span', { class: 'k-na' }, 'No data')) : null,
+      data.history.answerRecords ? null : h('p', { class: 'ins-note' }, 'No answers on record yet, so skip and snooze counts start at zero.')));
+
+    const maxBot = Math.max(1, ...data.byBot.map((b) => b.open));
+    frag.append(section('Open cards per bot', `${s.open} open`,
+      data.byBot.length ? h('ul', { class: 'ins-bots' }, data.byBot.map((b) => h('li', {},
+        h('span', { class: 'ins-bot-name' }, `${b.emoji || ''} ${b.source}`.trim()),
+        h('span', { class: 'ins-bot-bar' }, h('i', { style: `width:${Math.round((b.open / maxBot) * 100)}%;--c:${b.color || '#8b7cf6'}` })),
+        h('b', {}, b.open)))) : h('p', { class: 'ins-empty' }, 'No open cards.')));
+
+    const byId = new Map(data.attention.map((r) => [r.id, r]));
+    const due = data.dueSoon.map((id) => byId.get(id)).filter(Boolean);
+    frag.append(section('Due soon or overdue', 'Next 48 hours, and expired without an answer',
+      due.length ? h('ol', { class: 'ins-list' }, due.map((r) => insRow(r, maxScore))) : h('p', { class: 'ins-empty' }, 'Nothing due in the next 48 hours.')));
+    frag.append(h('p', { class: 'ins-note' }, `Updated ${etStamp(data.generatedAt)}. Read-only: nothing here changes a card.`));
+    body.innerHTML = ''; body.append(frag); body.scrollTop = 0;
+  }
+
+  // History: GET /api/answers?all=1 (includes undone answers; undo log entries are folded into "Undone").
+  function etStamp(iso) {
+    const d = new Date(iso);
+    return `${d.toLocaleDateString('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' })}, ${d.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' })} ET`;
+  }
+  async function loadHistory() {
+    const list = $('#historyList'), sub = $('#historySub');
+    sub.textContent = 'Loading…';
+    let data;
+    try { data = await api('/api/answers?all=1'); } catch (e) { list.innerHTML = ''; sub.textContent = e.status === 401 ? 'Signed out.' : 'Could not load history (offline?)'; return; }
+    const rows = (data.answers || []).filter((a) => a.gesture !== 'undo')
+      .sort((a, b) => Date.parse(b.answeredAt || b.recordedAt) - Date.parse(a.answeredAt || a.recordedAt));
+    list.innerHTML = '';
+    sub.textContent = rows.length ? `${rows.length} answer${rows.length === 1 ? '' : 's'} · newest first` : 'No answers yet. Swipe a card and it shows up here.';
+    for (const a of rows) {
+      const c = COLORS[a.gesture] || '#8a84a3';
+      const choice = a.gesture === 'tap3' ? (a.label || 'Reply') : (a.label || a.value || a.gesture);
+      list.append(h('li', { class: 'hist-row' + (a.undone ? ' undone' : ''), 'data-answer': a.id },
+        h('div', { class: 'hist-top' },
+          h('span', { class: 'hist-src' }, a.source || 'Unknown bot'),
+          h('time', { datetime: a.answeredAt || a.recordedAt }, etStamp(a.answeredAt || a.recordedAt))),
+        h('div', { class: 'hist-title' }, a.cardTitle || a.cardId),
+        h('div', { class: 'hist-meta' },
+          h('span', { class: 'hist-choice', style: `--c:${c}` }, choice),
+          a.undone ? h('span', { class: 'hist-undone' }, 'Undone') : null,
+          a.sample ? h('span', { class: 'hist-sample' }, 'Sample') : null,
+          a.attachments && a.attachments.length ? h('span', { class: 'hist-photos' }, `${a.attachments.length} photo${a.attachments.length > 1 ? 's' : ''}`) : null),
+        a.text ? h('p', { class: 'hist-text' }, a.text) : null));
+    }
+  }
+
+  // Notify me: subscribe this device to Web Push (server keeps subscriptions in data/push.json).
+  const notifyToggle = $('#notifyToggle'), notifyHint = $('#notifyHint');
+  const pushSupported = () => !STATIC_DEMO && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  function b64uToBytes(s) { const p = '='.repeat((4 - (s.length % 4)) % 4); const b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, (ch) => ch.charCodeAt(0)); }
+  async function currentSub() { try { const reg = await navigator.serviceWorker.getRegistration(); return reg ? await reg.pushManager.getSubscription() : null; } catch (_) { return null; } }
+  async function refreshNotify() {
+    if (!pushSupported() || config.demo) { notifyToggle.checked = false; notifyToggle.disabled = true; notifyHint.textContent = config.demo ? 'Not available in the demo' : 'This browser can\u2019t do notifications'; return; }
+    let key = {}; try { key = await api('/api/push/key'); } catch (_) {}
+    if (!key.enabled) { notifyToggle.disabled = true; notifyToggle.checked = false; notifyHint.textContent = 'Notifications aren\u2019t set up on the server yet'; return; }
+    notifyToggle.disabled = false;
+    const sub = await currentSub();
+    notifyToggle.checked = !!sub && Notification.permission === 'granted';
+    notifyHint.textContent = Notification.permission === 'denied' ? 'Blocked in Chrome\u2019s site settings' : notifyToggle.checked ? 'On for this device' : 'A morning ping when cards are waiting';
+  }
+  notifyToggle.addEventListener('change', async () => {
+    const want = notifyToggle.checked; notifyToggle.disabled = true;
+    try {
+      if (want) {
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') throw Object.assign(new Error('permission'), { perm });
+        const { publicKey } = await api('/api/push/key');
+        const reg = await navigator.serviceWorker.ready;
+        const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(publicKey) });
+        await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
+        toast('Notifications on for this device', COLORS.right);
+      } else {
+        const sub = await currentSub();
+        if (sub) { await api('/api/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {}); await sub.unsubscribe(); }
+        toast('Notifications off', '#fff');
+      }
+    } catch (e) {
+      toast(e.perm === 'denied' ? 'Notifications are blocked for this site in Chrome' : 'Couldn\u2019t change notifications', COLORS.left, 2600);
+    }
+    notifyToggle.disabled = false; refreshNotify();
+  });
+  if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.type === 'md-refresh' && !state.busy) loadDeck(); });
 
   greeting();
   render();
@@ -1249,5 +1505,5 @@
       document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
     }).catch((e) => console.warn('SW registration failed', e)));
   }
-  window.MorningDeck = { state, swipe, openSheet, closeSheet, undo, flushOutbox, syncViewport, confetti, install, diag, loadDeck, loadConfig, toast, config, render }; // used by the friends UI; handy for debugging
+  window.MorningDeck = { state, swipe, openSheet, undo, flushOutbox, syncViewport, confetti, install, diag, loadHistory, loadInsights, panels, applyTheme, render, openFold }; // handy for debugging
 })();

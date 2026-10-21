@@ -8,6 +8,8 @@ const path = require('path');
 const crypto = require('crypto');
 const core = require('./lib/core');
 const uploads = require('./lib/uploads');
+const push = require('./lib/push');
+const insights = require('./lib/insights');
 
 // ---------- config (.env) ----------
 function loadEnv(file) {
@@ -43,6 +45,10 @@ const PUBLIC = path.join(core.ROOT, 'public');
 // Install diagnostics from the phone (POST /api/diag): one JSON line per beacon, UA + display/SW flags only.
 const DIAG_LOG = process.env.MD_DIAG_LOG || path.join(core.ROOT, 'logs', 'diag.log');
 const DIAG_MAX_BYTES = 2 * 1024 * 1024;
+// Android app (TWA) support: Digital Asset Links (public, so Chrome can verify the app and hide the URL bar)
+// and the personal APK download (behind auth; since 2026-10-19 it carries no token, but it is still personal: never publish).
+const ASSETLINKS_FILE = process.env.MD_ASSETLINKS_FILE || path.join(core.ROOT, 'run', 'android', 'assetlinks.json');
+const APK_FILE = process.env.MD_APK_FILE || path.join(core.ROOT, '..', 'morning-deck-android', 'MorningDeck.apk');
 const COOKIE = 'md_session';
 const COOKIE_VALUE = crypto.createHash('sha256').update('morning-deck-cookie:' + TOKEN).digest('base64url');
 
@@ -68,14 +74,16 @@ function authed(req, url) {
   if (DEMO) return 'demo';
   const h = req.headers.authorization || '';
   if (h.startsWith('Bearer ') && safeEq(h.slice(7).trim(), TOKEN)) return 'bearer';
-  if (url.searchParams.has('token') && safeEq(url.searchParams.get('token'), TOKEN)) return 'query';
+  // ?token= is only for the one-time sign-in link on pages; the API takes the Bearer header (or the cookie) only.
+  if (url.searchParams.has('token') && !url.pathname.startsWith('/api/') && safeEq(url.searchParams.get('token'), TOKEN)) return 'query';
   const c = parseCookies(req)[COOKIE];
   if (c && safeEq(c, COOKIE_VALUE)) return 'cookie';
   return null;
 }
-function isHttps(req) { return req.socket.encrypted || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https'; }
-function sessionCookie(req) {
-  return `${COOKIE}=${COOKIE_VALUE}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${isHttps(req) ? '; Secure' : ''}`;
+// Always Secure (browsers treat http://127.0.0.1 and localhost as secure contexts, so local use still works) and
+// SameSite=Strict. See CROSS_SITE_BOUNCE below for how links from other apps still open the deck.
+function sessionCookie() {
+  return `${COOKIE}=${COOKIE_VALUE}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=31536000`;
 }
 const SEC_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' };
 function send(res, status, body, headers = {}) {
@@ -138,19 +146,101 @@ function todaysFeedbackCard(now) {
   return o && core.isPending(o.card, now) ? o.card : null;
 }
 
-const LOCKED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#1b1440"><title>Morning Deck — private</title>
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,sans-serif;background:linear-gradient(160deg,#1b1440,#5b2a86 55%,#f08a5d);color:#fff;text-align:center}div{padding:32px;max-width:320px}h1{font-size:22px;margin:12px 0 6px}p{opacity:.8;line-height:1.5}</style></head>
-<body><div><img src="/icons/icon-192.png" width="72" height="72" alt=""><h1>Morning Deck is private</h1><p>Open it with your private link (the one that ends in <code>?token=…</code>). After the first visit this device stays signed in.</p></div></body></html>`;
+// Sign-in / "Sign in again" page, served (401, no-store, X-MD-Lock) for any unauthenticated page load. Self-contained:
+// inline CSS (no FOUC), theme picked before paint from md_theme / prefers-color-scheme. The form POSTs to /signin.
+const LOCK_CSS = `:root{color-scheme:dark;--bg:linear-gradient(160deg,#1b1440,#5b2a86 55%,#f08a5d);--fg:#fff;--sub:rgba(255,255,255,.8);--box:rgba(255,255,255,.12);--line:rgba(255,255,255,.35);--btn:#fff;--btnfg:#1b1440;--err:#ffb3c0;--note:rgba(255,170,31,.22)}
+html[data-theme=light]{color-scheme:light;--bg:linear-gradient(180deg,#e9e3ff,#f3e6f7 45%,#fde3e4 75%,#ffd9c4);--fg:#1d1832;--sub:#4b4566;--box:rgba(255,255,255,.75);--line:rgba(29,24,50,.25);--btn:#1d1832;--btnfg:#fff;--err:#b0002a;--note:rgba(255,170,31,.3)}
+.md-lock{position:fixed;inset:0;z-index:2147483000;overflow:auto;display:grid;place-items:center;margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--fg);text-align:center}
+.md-lock.over{background:rgba(10,6,30,.72);backdrop-filter:blur(6px)}html[data-theme=light] .md-lock.over{background:rgba(246,233,242,.82)}
+.md-lock .in{padding:28px 24px;max-width:340px;width:100%;box-sizing:border-box}.md-lock h1{font-size:22px;margin:12px 0 6px}.md-lock p{color:var(--sub);line-height:1.5;margin:8px 0;font-size:15px}
+.md-lock .note{background:var(--note);color:var(--fg);border-radius:10px;padding:8px 10px;font-size:14px}
+.md-lock form{display:grid;gap:10px;margin:16px 0 8px}.md-lock textarea{font:inherit;font-size:16px;min-height:64px;resize:vertical;border-radius:12px;border:1px solid var(--line);background:var(--box);color:var(--fg);padding:10px 12px;box-sizing:border-box;width:100%}
+.md-lock button{font:inherit;font-weight:600;font-size:16px;border:0;border-radius:12px;padding:12px;background:var(--btn);color:var(--btnfg);cursor:pointer}.md-lock button:disabled{opacity:.6}
+.md-lock .err{color:var(--err);min-height:1.4em;font-size:14px}.md-lock small{color:var(--sub);font-size:13px;line-height:1.45;display:block}`;
+// Form logic, inline on the page; app.js runs the same markup/script when an /api call 401s (it GETs /signin).
+const LOCK_SCRIPT = `(function(){var f=document.getElementById('mdSignin');if(!f)return;var t=f.querySelector('textarea'),b=f.querySelector('button'),e=document.getElementById('mdSigninErr');
+f.addEventListener('submit',function(ev){ev.preventDefault();var v=t.value.trim();if(!v){e.textContent='Paste your token or sign-in link.';return}b.disabled=true;e.textContent='';
+fetch('/signin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:v})}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
+if(r.ok){t.value='';location.replace('/');return}b.disabled=false;e.textContent=r.status===429?('Too many attempts. Try again in '+Math.ceil((j.retryAfter||60)/60)+' min.'):(j.error||'That token didn\\u2019t work.')})}).catch(function(){b.disabled=false;e.textContent='Offline? Could not reach Morning Deck.'})})})();`;
+function lockHtml(stale) {
+  return `<div class="md-lock" role="dialog" aria-modal="true" aria-labelledby="mdLockH"><div class="in"><img src="/icons/icon-192.png" width="72" height="72" alt=""><h1 id="mdLockH">Sign in again</h1>
+${stale ? '<p class="note" id="mdStale">This link is out of date. Paste your current token or sign-in link below.</p>' : '<p>Morning Deck is private and this device isn\u2019t signed in (or its session expired).</p>'}
+<form id="mdSignin" autocomplete="off"><textarea name="token" aria-label="Token or sign-in link" placeholder="Paste your token or sign-in link" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea><div class="err" id="mdSigninErr" role="alert"></div><button type="submit">Sign in</button></form>
+<small>Or open your private sign-in link (the one ending in <code>?token=…</code>) on this device.</small></div></div>`;
+}
+const THEME_BOOT = `<script>try{var m=localStorage.getItem("md_theme");if(m==="light"||(!m&&matchMedia("(prefers-color-scheme: light)").matches))document.documentElement.dataset.theme="light"}catch(e){}</script>`;
+const lockPage = (stale) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#1b1440"><meta name="color-scheme" content="dark light"><title>Morning Deck — sign in</title>${THEME_BOOT}<style>${LOCK_CSS}</style></head>
+<body>${lockHtml(stale)}<script>${LOCK_SCRIPT}</script></body></html>`;
+const LOCKED_PAGE = lockPage(false);
+
+// Failed sign-in rate limit: per client (X-Forwarded-For from the Funnel, else socket) and a global cap, 15-min window.
+const SIGNIN_WINDOW = 15 * 60e3, SIGNIN_PER_CLIENT = 5, SIGNIN_GLOBAL = 30;
+const signinFails = new Map(); let signinGlobal = [];
+function signinKey(req) { return String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '?'; }
+function signinBlocked(key, now = Date.now()) {
+  signinGlobal = signinGlobal.filter((t) => now - t < SIGNIN_WINDOW);
+  const mine = (signinFails.get(key) || []).filter((t) => now - t < SIGNIN_WINDOW); signinFails.set(key, mine);
+  const list = mine.length >= SIGNIN_PER_CLIENT ? mine : signinGlobal.length >= SIGNIN_GLOBAL ? signinGlobal : null;
+  return list ? Math.ceil((list[0] + SIGNIN_WINDOW - now) / 1000) : 0;
+}
+async function handleSignin(req, res) {
+  if (DEMO) return json(res, 404, { error: 'not found' });
+  if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: 'cross-site sign-in refused' });
+  const key = signinKey(req); const wait = signinBlocked(key);
+  if (wait) return json(res, 429, { error: 'too many failed attempts', retryAfter: wait }, { 'Retry-After': String(wait) });
+  let raw = ''; try { const b = (await readBody(req, 4096)) || {}; raw = String(b.token || '').trim(); } catch (e) { return json(res, e.status || 400, { error: 'send JSON {"token": "..."}' }); }
+  // Accept a bare token or a whole sign-in link (…?token=…).
+  if (/[?&]token=/.test(raw)) { try { raw = new URL(raw, 'http://x').searchParams.get('token') || ''; } catch { raw = ''; } }
+  if (raw && safeEq(raw, TOKEN)) { signinFails.delete(key); return json(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie() }); }
+  const now = Date.now(); signinFails.get(key).push(now); signinGlobal.push(now);
+  return json(res, 401, { error: 'That token didn\u2019t work. It may have been rotated.' });
+}
+
+const CROSS_SITE_BOUNCE = '<script>location.replace(location.href)</script>';
 
 // ---------- API ----------
-async function handleApi(req, res, url) {
+async function handleApi(req, res, url, how) {
   const p = url.pathname;
   if (p === '/api/health' && req.method === 'GET') {
     const cards = core.loadCards();
     return json(res, 200, { ok: true, name: 'morning-deck', version: '0.2.0', time: new Date().toISOString(), pending: cards.filter((c) => core.isPending(c)).length, total: cards.length });
   }
   if (p === '/api/config' && req.method === 'GET') {
-    return json(res, 200, { demo: DEMO, greetingName: GREETING_NAME, uploads: !DEMO, maxPhotos: uploads.MAX_PER_ANSWER });
+    return json(res, 200, { demo: DEMO, greetingName: GREETING_NAME, uploads: !DEMO, maxPhotos: uploads.MAX_PER_ANSWER, push: !DEMO && push.enabled() });
+  }
+  // ---------- Web Push ("Notify me") ----------
+  if (p === '/api/push/key' && req.method === 'GET') {
+    if (DEMO || !push.enabled()) return json(res, 200, { enabled: false });
+    return json(res, 200, { enabled: true, publicKey: push.publicKey() });
+  }
+  if (p === '/api/push/subscribe' && req.method === 'POST') {
+    if (DEMO) return json(res, 403, { error: 'notifications are disabled in the demo' });
+    if (!push.enabled()) return json(res, 503, { error: 'push is not configured (scripts/init-vapid.sh)' });
+    const b = (await readBody(req, 8192)) || {};
+    const sub = await core.withLock(() => push.subscribe(b.subscription || b, req.headers['user-agent']));
+    if (!sub) return json(res, 400, { error: 'subscription must be {endpoint: https URL, keys: {p256dh, auth}}' });
+    return json(res, 201, { ok: true, subscribed: true });
+  }
+  if (p === '/api/push/unsubscribe' && req.method === 'POST') {
+    if (DEMO) return json(res, 403, { error: 'notifications are disabled in the demo' });
+    const b = (await readBody(req, 8192)) || {};
+    const removed = await core.withLock(() => push.unsubscribe(String(b.endpoint || '')));
+    return json(res, 200, { ok: true, removed });
+  }
+  if (p === '/api/push/status' && req.method === 'GET') {
+    return json(res, 200, { enabled: !DEMO && push.enabled(), subscriptions: DEMO ? 0 : push.load().length });
+  }
+  // POST /api/notify (Bearer only): "Your Morning Deck is ready: N cards" to every subscribed device, only if N > 0.
+  if (p === '/api/notify' && req.method === 'POST') {
+    if (how !== 'bearer') return json(res, 403, { error: 'POST /api/notify needs Authorization: Bearer <token>' });
+    if (DEMO) return json(res, 403, { error: 'notifications are disabled in the demo' });
+    const pending = core.loadCards().filter((c) => core.isPending(c)).length;
+    if (!pending) return json(res, 200, { pending, sent: 0, skipped: 'nothing pending' });
+    if (!push.enabled()) return json(res, 503, { pending, sent: 0, error: 'push is not configured (scripts/init-vapid.sh)' });
+    const body = `Your Morning Deck is ready: ${pending} card${pending === 1 ? '' : 's'}`;
+    if (url.searchParams.get('dryRun') === '1') return json(res, 200, { pending, sent: 0, dryRun: true, body, subscriptions: push.load().length });
+    const r = await push.sendAll({ title: 'Morning Deck', body, url: '/', tag: 'morning-deck-ready', pending });
+    return json(res, 200, { pending, body, ...r });
   }
   if (p === '/api/diag' && req.method === 'POST') {
     const b = (await readBody(req, 4096)) || {};
@@ -160,7 +250,7 @@ async function handleApi(req, res, url) {
     const line = {
       at: new Date().toISOString(), ua: str(b.ua, 400), displayMode: str(b.displayMode, 20), bipFired: bool(b.bipFired),
       swControlled: bool(b.swControlled), standalone: bool(b.standalone), ts: str(b.ts, 40), event: str(b.event, 40), outcome: str(b.outcome, 20),
-      installed: bool(b.installed), path: str(b.path, 40), via: str(req.headers['x-forwarded-proto'] ? 'tunnel' : 'direct', 10),
+      installed: bool(b.installed), bipSupported: bool(b.bipSupported), secs: typeof b.secs === 'number' ? Math.round(b.secs) : undefined, path: str(b.path, 40), via: str(req.headers['x-forwarded-proto'] ? 'tunnel' : 'direct', 10),
     };
     try {
       fs.mkdirSync(path.dirname(DIAG_LOG), { recursive: true });
@@ -176,12 +266,27 @@ async function handleApi(req, res, url) {
     if (p === '/api/answers' && req.method === 'GET') return json(res, 200, { count: 0, answers: [], demo: true });
     if (p === '/api/answers/undo' && req.method === 'POST') return json(res, 201, { undo: { gesture: 'undo', demo: true }, card: null });
   }
+  { // Read-only zone feeds written by other bots (e.g. Scheduler for Lantern Isle). Auth-gated like every /api route.
+    const m = p.match(/^\/api\/zones\/([a-z0-9-]{1,40})$/);
+    if (m && req.method === 'GET') {
+      if (DEMO) return json(res, 404, { error: 'no zones in the demo' });
+      const f = path.join(core.DATA_DIR, 'zones', m[1] + '.json');
+      let raw; try { raw = fs.readFileSync(f, 'utf8'); } catch { return json(res, 404, { error: 'zone not published yet' }); }
+      try { return send(res, 200, JSON.stringify(JSON.parse(raw)), { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); }
+      catch { return json(res, 502, { error: 'zone file is not valid JSON' }); }
+    }
+  }
   if (p === '/api/deck' && req.method === 'GET') {
     const now = new Date();
     const cards = core.sortDeck(core.loadCards().filter((c) => core.isPending(c, now)));
     const fb = todaysFeedbackCard(now); // built-in feedback card: always dealt last, regardless of priority
     if (fb) cards.push(fb);
     return json(res, 200, { generatedAt: now.toISOString(), count: cards.length, cards: cards.map(cardForClient) });
+  }
+  // Read-only at-a-glance stats (same auth as /api/deck: cookie or Bearer). Never writes.
+  if (p === '/api/insights' && req.method === 'GET') {
+    if (DEMO) return json(res, 200, { demo: true, ...insights.compute({ answers: [] }) });
+    return json(res, 200, insights.compute());
   }
   if (p === '/api/cards' && req.method === 'GET') {
     return json(res, 200, { cards: core.loadCards().map(cardForClient) });
@@ -297,6 +402,8 @@ async function handleApi(req, res, url) {
         card.status = 'snoozed'; card.snoozedUntil = answer.snoozedUntil; card.snoozeCount = (card.snoozeCount || 0) + 1;
       } else {
         card.status = 'answered'; card.answeredAt = answer.answeredAt; delete card.snoozedUntil;
+        // Additive counter for Insights (does not change what the card means): how often it was skipped.
+        if (b.gesture === 'down' && !opened.builtin) { card.skipCount = (card.skipCount || 0) + 1; card.lastSkippedAt = answer.answeredAt; }
       }
       card.lastAnswerId = answer.id;
       if (DEMO) return { status: 201, body: { answer: { ...answer, demo: true }, card: cardForClient(card) } }; // not stored
@@ -321,6 +428,7 @@ async function handleApi(req, res, url) {
       const now = new Date().toISOString();
       const entry = { id: 'ans_' + crypto.randomBytes(6).toString('hex'), cardId: target.cardId, source: target.source, sourceId: target.sourceId, cardTitle: target.cardTitle, sample: target.sample, gesture: 'undo', undoes: target.id, answeredAt: now, recordedAt: now };
       answers.push(entry);
+      if (card && target.gesture === 'down' && card.skipCount) card.skipCount -= 1;
       if (card) { card.status = 'pending'; delete card.snoozedUntil; delete card.answeredAt; delete card.lastAnswerId; }
       core.saveAnswers(answers); if (opened) opened.save();
       return { status: 201, body: { undo: entry, card: card ? cardForClient(card) : null } };
@@ -349,33 +457,103 @@ function serveStatic(req, res, url) {
   });
 }
 
+
+// ---------- /main-menu reverse proxy (auth required; path forwarded unchanged) ----------
+const MAIN_MENU_HOST = '127.0.0.1', MAIN_MENU_PORT = 8082;
+const isMainMenu = (p) => p === '/main-menu' || p.startsWith('/main-menu/');
+// Forward headers minus hop-by-hop ones, and never pass Morning Deck's own credentials upstream.
+const HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'proxy-authorization', 'proxy-authenticate']);
+function upstreamHeaders(req, keepUpgrade) {
+  const h = {};
+  for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k) && k !== 'authorization' && k !== 'cookie') h[k] = v;
+  const rest = (req.headers.cookie || '').split(';').map((x) => x.trim()).filter((x) => x && !x.startsWith(COOKIE + '='));
+  if (rest.length) h.cookie = rest.join('; ');
+  h['x-forwarded-host'] = req.headers.host || ''; h['x-forwarded-proto'] = req.headers['x-forwarded-proto'] || 'https';
+  if (keepUpgrade) { h.connection = 'Upgrade'; h.upgrade = req.headers.upgrade; }
+  return h;
+}
+function proxyMainMenu(req, res) {
+  const up = http.request({ host: MAIN_MENU_HOST, port: MAIN_MENU_PORT, method: req.method, path: req.url, headers: upstreamHeaders(req) }, (r) => {
+    const h = { ...r.headers }; for (const k of Object.keys(h)) if (HOP.has(k)) delete h[k];
+    res.writeHead(r.statusCode, h);
+    r.pipe(res);
+  });
+  up.on('error', () => { if (!res.headersSent) send(res, 502, 'main-menu upstream unavailable'); else res.destroy(); });
+  req.on('aborted', () => up.destroy());
+  req.pipe(up);
+}
+
 const server = http.createServer(async (req, res) => {
   const started = Date.now();
   let url;
   try { url = new URL(req.url, 'http://localhost'); } catch { return send(res, 400, 'bad url'); }
   res.on('finish', () => {
     const safePath = url.pathname + (url.searchParams.has('token') ? '?token=[redacted]' : '');
-    console.log(`${new Date().toISOString()} ${req.method} ${safePath} ${res.statusCode} ${Date.now() - started}ms`);
+    // TEMP diag (2026-10-20): presence/match flags and UA only, never credential values.
+    const ck = parseCookies(req)[COOKIE]; const ckf = !ck ? 'none' : (safeEq(ck, COOKIE_VALUE) ? 'ok' : 'stale');
+    const bh = (req.headers.authorization || '').startsWith('Bearer ') ? 'y' : 'n';
+    const ua = String(req.headers['user-agent'] || '-').replace(/[^\x20-\x7e]/g, '?').slice(0, 160);
+    console.log(`${new Date().toISOString()} ${req.method} ${safePath} ${res.statusCode} ${Date.now() - started}ms ck=${ckf} bearer=${bh} qtoken=${url.searchParams.has('token') ? 'y' : 'n'} sfs=${req.headers['sec-fetch-site'] || '-'} ua="${ua}"`);
   });
   try {
+    if (url.pathname === '/.well-known/assetlinks.json' && (req.method === 'GET' || req.method === 'HEAD')) {
+      let body = null; if (!DEMO) { try { body = JSON.stringify(JSON.parse(fs.readFileSync(ASSETLINKS_FILE, 'utf8'))); } catch {} }
+      if (!body) return json(res, 404, []);
+      return send(res, 200, body, { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' });
+    }
     if (isPublic(url.pathname) && (req.method === 'GET' || req.method === 'HEAD')) return serveStatic(req, res, url);
+    if (url.pathname === '/signin' && req.method === 'GET') return send(res, 200, lockPage(false), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-MD-Lock': '1' });
+    if (url.pathname === '/signin' && req.method === 'POST') return await handleSignin(req, res);
     const how = authed(req, url);
     if (!how) {
-      if (url.pathname.startsWith('/api/')) return json(res, 401, { error: 'unauthorized: send Authorization: Bearer <token>' });
-      return send(res, 401, LOCKED_PAGE, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      if (url.pathname.startsWith('/api/')) return json(res, 401, { error: 'unauthorized: send Authorization: Bearer <token>', signin: '/signin' }, { 'X-MD-Lock': '1' });
+      // SameSite=Strict withholds the cookie on a navigation that started on another site (a link in chat/email, or the
+      // redirect after a cross-site ?token link). Reload once from this page: that navigation is same-origin, so the
+      // cookie is sent. The reload arrives as Sec-Fetch-Site: same-origin, so an unsigned-in device just sees the lock.
+      const site = String(req.headers['sec-fetch-site'] || '');
+      const bounce = (site === 'cross-site' || site === 'same-site') && req.headers['sec-fetch-mode'] === 'navigate' && req.method === 'GET';
+      const page = url.searchParams.has('token') ? lockPage(true) : LOCKED_PAGE; // stale ?token= (old APK): "out of date" note
+      return send(res, 401, bounce ? page.replace('</body>', `${CROSS_SITE_BOUNCE}</body>`) : page, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-MD-Lock': '1' });
     }
     if (how === 'query' && !url.pathname.startsWith('/api/')) {
       // First visit with ?token=: set the httpOnly cookie, then drop the token from the URL bar/history.
       url.searchParams.delete('token');
-      return send(res, 302, 'redirecting', { 'Set-Cookie': sessionCookie(req), Location: url.pathname + (url.search || ''), 'Cache-Control': 'no-store' });
+      return send(res, 302, 'redirecting', { 'Set-Cookie': sessionCookie(), Location: url.pathname + (url.search || ''), 'Cache-Control': 'no-store' });
     }
-    if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+    if (isMainMenu(url.pathname)) return proxyMainMenu(req, res);
+    if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url, how);
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'method not allowed');
+    if (url.pathname === '/download/MorningDeck.apk') {
+      let st = null; if (!DEMO) { try { st = fs.statSync(APK_FILE); } catch {} }
+      if (!st || !st.isFile()) return send(res, 404, 'not found', { 'Cache-Control': 'no-store' });
+      res.writeHead(200, { ...SEC_HEADERS, 'Content-Type': 'application/vnd.android.package-archive', 'Content-Length': st.size,
+        'Content-Disposition': 'attachment; filename="MorningDeck.apk"', 'Cache-Control': 'private, no-store' });
+      if (req.method === 'HEAD') return res.end();
+      return fs.createReadStream(APK_FILE).pipe(res);
+    }
     return serveStatic(req, res, url);
   } catch (e) {
     console.error(e);
     return json(res, e.status || 500, { error: e.status ? e.message : 'internal error' });
   }
 });
+// WebSocket upgrades for /main-menu only, same cookie/bearer check (no ?token on upgrades); everything else is refused.
+server.on('upgrade', (req, sock, head) => {
+  let url; try { url = new URL(req.url, 'http://localhost'); } catch { return sock.destroy(); }
+  const how = isMainMenu(url.pathname) && authed(req, url);
+  if (!how || how === 'query') { sock.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return; }
+  const up = http.request({ host: MAIN_MENU_HOST, port: MAIN_MENU_PORT, method: req.method, path: req.url, headers: upstreamHeaders(req, true) });
+  up.on('upgrade', (r, us, uhead) => {
+    let out = `HTTP/1.1 ${r.statusCode} ${r.statusMessage}\r\n`;
+    for (let i = 0; i < r.rawHeaders.length; i += 2) out += `${r.rawHeaders[i]}: ${r.rawHeaders[i + 1]}\r\n`;
+    sock.write(out + '\r\n'); if (uhead && uhead.length) sock.write(uhead); if (head && head.length) us.write(head);
+    us.pipe(sock).pipe(us); us.on('error', () => sock.destroy()); sock.on('error', () => us.destroy());
+  });
+  up.on('response', (r) => { sock.end(`HTTP/1.1 ${r.statusCode} ${r.statusMessage}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`); r.resume(); });
+  up.on('error', () => sock.destroy());
+  up.end();
+});
+{ const fixed = core.hardenPermissions(); if (fixed.length) console.log(`${new Date().toISOString()} permissions tightened (dirs 700, data files 600): ${fixed.length} path(s)`); }
+if (!DEMO) core.checkQueueWarning();
 if (DEMO) { seedDemo(); setInterval(seedDemo, 3600e3).unref(); }
 server.listen(PORT, HOST, () => console.log(`Morning Deck${DEMO ? ' DEMO' : ''} listening on http://${HOST}:${PORT} (data: ${core.DATA_DIR})`));
