@@ -13,7 +13,17 @@ WINDOW=${WD_WINDOW:-8}; IN_WINDOW=${WD_FAILS_IN_WINDOW:-4}; IN_ROW=${WD_FAILS_IN
 COOLDOWN=${WD_COOLDOWN:-600}; INTERVAL=${WD_INTERVAL:-20}
 STATE=run/watchdog.window LAST=run/watchdog.last-restart LOG=logs/watchdog.log
 TS=( "$ROOT/bin/tailscale" "--socket=$ROOT/run/tailscale/tailscaled.sock" )
+LOCAL_TIMEOUT=${WD_LOCAL_TIMEOUT:-15}; LOCAL_MISSES=${WD_LOCAL_MISSES:-3}; LOCAL_MISS=run/watchdog.local-miss
+LOAD_FACTOR=${WD_LOAD_FACTOR:-4}
 mkdir -p run logs
+port_bound() { ss -Hltn "sport = :$PORT" 2>/dev/null | grep -q .; }
+server_running() { pgrep -f 'node server.js' >/dev/null || port_bound; }
+start_server() { # never start a second copy; stdout goes to the live logs/server.log (opened fresh by this shell)
+  if server_running; then log "start_server: already running or :$PORT bound, skipping"; return; fi
+  ( set -a; [ -f .env ] && . ./.env; set +a; exec setsid nohup node server.js >> "$ROOT/logs/server.log" 2>&1 </dev/null ) &
+  echo $! > run/server.pid; log "server started (pid $(cat run/server.pid)), log logs/server.log"
+}
+load_too_high() { awk -v n="$(nproc)" -v f="$LOAD_FACTOR" '{exit !($1 > n*f)}' /proc/loadavg; }
 log() { echo "$(date -Is) $*" >> "$LOG"; }
 healthy() { case "$1" in 200|401) return 0;; *) return 1;; esac; }
 
@@ -21,6 +31,7 @@ restart_funnel() {
   exec 8>run/watchdog-restart.lock; flock -n 8 || { log "restart already in progress elsewhere, skipping"; return; }
   local now last; now=$(date +%s); last=$(cat "$LAST" 2>/dev/null || echo 0)
   if [ $((now - last)) -lt "$COOLDOWN" ]; then log "restart wanted but in cooldown ($((now - last))s < ${COOLDOWN}s), waiting"; flock -u 8; return; fi
+  if load_too_high; then log "restart wanted but load $(cut -d' ' -f1 /proc/loadavg) > ${LOAD_FACTOR}x$(nproc) cpus, skipping tailscaled restart"; flock -u 8; return; fi
   echo "$now" > "$LAST"
   log "RESTART tailscaled (window: $(cat "$STATE"))"
   pkill -f "$ROOT/bin/tailscaled" ; pkill -f '^bin/tailscaled'; sleep 3
@@ -47,12 +58,17 @@ check_once() {
   tail -n "$WINDOW" "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
   fails=$(grep -c 1 "$STATE"); row=$(tac "$STATE" | awk '$1==1{n++;next}{exit}END{print n+0}')
   if [ "$fails" -ge "$IN_WINDOW" ] || [ "$row" -ge "$IN_ROW" ]; then restart_funnel; fi
-  # keep the node server alive too (401 = up, token required)
-  code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$PORT/manifest.webmanifest")
-  if ! healthy "$code"; then
-    log "server check failed ($code), restarting server"
-    nohup setsid node server.js >> logs/server.log 2>&1 </dev/null & echo $! > run/server.pid
-  fi
+  # keep the node server alive too (401 = up, token required). Under heavy box load the server can be slow,
+  # so: long timeout, 3 consecutive misses, and only (re)launch if no node server.js / no :PORT listener exists.
+  code=$(curl -s -o /dev/null -m "$LOCAL_TIMEOUT" -w '%{http_code}' "http://127.0.0.1:$PORT/manifest.webmanifest"); code=${code:-000}
+  if healthy "$code"; then echo 0 > "$LOCAL_MISS"; return; fi
+  local miss; miss=$(( $(cat "$LOCAL_MISS" 2>/dev/null || echo 0) + 1 )); echo "$miss" > "$LOCAL_MISS"
+  log "server check failed ($code), local miss $miss/$LOCAL_MISSES"
+  [ "$miss" -ge "$LOCAL_MISSES" ] || return
+  if server_running; then log "server slow but process/listener present (pids: $(pgrep -f 'node server.js' | tr '\n' ' ')), NOT restarting"; return; fi
+  log "server process gone and :$PORT unbound after $miss misses, starting server"
+  start_server
+  echo 0 > "$LOCAL_MISS"
 }
 
 if [ "${1:-}" = "--once" ]; then
