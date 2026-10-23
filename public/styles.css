@@ -729,3 +729,13 @@ html[data-theme="light"] .panel-backdrop { background: rgba(36, 18, 63, .35); }
 .card-divider h2 { margin: 0; color: #fff; }
 .card-divider .body { color: rgba(255,255,255,.82); max-width: 260px; }
 .card-divider:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+
+/* ---------- batch 2: due line + staleness (2026-10-22) ---------- */
+.due-line { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; margin: 2px 0 8px; padding: 6px 12px; border-radius: 12px; font-weight: 800; font-size: 15px; letter-spacing: .1px; }
+.due-line .due-ico { font-size: 15px; }
+.due-line.due-over { background: #d42a4f; color: #fff; }
+.due-line.due-today { background: #ffd666; color: #4a2c00; }
+.due-line.due-soon { background: #fff1d6; color: #9a5b00; }
+.due-line.due-later { background: #ece8ff; color: #3a2870; }
+.chip.chip-relevant { background: #3a2870; color: #fff; }
+.sheet-due { margin: 0 0 10px; }

@@ -56,6 +56,21 @@
     if (age >= 24 * 3600e3) { const d = Math.floor(age / 86400e3); return { cls: 'chip-stale', text: `Waiting ${d} day${d > 1 ? 's' : ''}` }; }
     return null;
   }
+  // Due date shown prominently on the card: dueAt (or `due`); a card with only expiresAt shows "Respond by".
+  const etDay = (t) => new Date(t).toLocaleDateString('en-CA', { timeZone: TZ });
+  function dueInfo(card, now = Date.now()) {
+    if (card.builtin) return null;
+    const raw = card.dueAt || card.due || card.expiresAt; const t = raw ? Date.parse(raw) : NaN;
+    if (Number.isNaN(t)) return null;
+    const word = card.dueAt || card.due ? 'Due' : 'Respond by';
+    const time = new Date(t).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' });
+    const day = new Date(t).toLocaleDateString('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' });
+    const today = etDay(now), d = etDay(t), tomorrow = etDay(now + 864e5);
+    if (t < now) return { cls: 'due-over', text: `Overdue · ${word.toLowerCase()} ${d === today ? time : day}` };
+    if (d === today) return { cls: 'due-today', text: `${word} today · ${time}` };
+    if (d === tomorrow) return { cls: 'due-soon', text: `${word} tomorrow · ${time}` };
+    return { cls: 'due-later', text: `${word} ${day}` };
+  }
   // Display name comes from the server (MD_GREETING_NAME); cached so the header doesn't flicker on the next launch.
   const NAME_KEY = 'md_greeting_name';
   const config = { demo: false, uploads: true, greetingName: (() => { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } })() };
@@ -292,7 +307,9 @@
       : h('div', { class: 'chips' },
         h('span', { class: 'chip' }, TYPE_LABEL[card.type] || card.type),
         h('span', { class: `chip prio-${card.priority}` }, card.priority === 'high' ? 'High priority' : card.priority === 'low' ? 'Low' : 'Normal'),
-        ...((a) => (a ? [h('span', { class: `chip ${a.cls}` }, a.text)] : []))(ageChip(card))));
+        ...((a) => (a ? [h('span', { class: `chip ${a.cls}` }, a.text)] : []))(ageChip(card)),
+        card.stale ? h('span', { class: 'chip chip-relevant', title: 'Pending 7+ days' }, 'Still relevant?') : null));
+    { const du = dueInfo(card); if (du) node.append(h('div', { class: `due-line ${du.cls}` }, h('span', { class: 'due-ico', 'aria-hidden': 'true' }, '⏰'), du.text)); }
     node.append(h('h2', {}, card.title));
     if (card.body) node.append(h('p', { class: 'body' }, card.body));
     if (card.type === 'choice') {
@@ -786,6 +803,9 @@
     const bot = $('#sheetBot'); bot.innerHTML = '';
     bot.append(h('div', { class: 'avatar', style: `--accent:${card.color || '#7c6cf2'}` }, card.emoji || '🤖'),
       h('div', {}, card.source, h('small', {}, card.builtin ? 'Built into Morning Deck' : fmtTime(card.createdAt) + (card.sample ? ' · SAMPLE data' : ''))));
+    { const meta = $('#sheetMeta'); meta.innerHTML = ''; const du = dueInfo(card);
+      if (du) meta.append(h('div', { class: `due-line sheet-due ${du.cls}` }, h('span', { class: 'due-ico', 'aria-hidden': 'true' }, '⏰'), du.text));
+      if (card.stale) meta.append(h('span', { class: 'chip chip-relevant' }, 'Still relevant? Pending 7+ days')); }
     $('#sheetTitle').textContent = card.title;
     $('#sheetBody').textContent = card.body || '';
     $('#sheetDetails').textContent = card.details || '';

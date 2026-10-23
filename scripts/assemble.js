@@ -50,11 +50,18 @@ function matchResolved(card, rows) {
 }
 
 // ---------- ranking ----------
-const dueOf = (c) => { const v = c.dueAt || c.due; const t = v ? Date.parse(v) : NaN; return Number.isNaN(t) ? Infinity : t; };
+// Due date: dueAt (or legacy `due`); a card with only expiresAt is due when it expires (it disappears then).
+const dueOf = (c) => { const v = c.dueAt || c.due || c.expiresAt; const t = v ? Date.parse(v) : NaN; return Number.isNaN(t) ? Infinity : t; };
 const ageOf = (c) => Date.parse(c.createdAt || c.receivedAt || 0) || 0;
+// Items due today (ET) or overdue always rank first; then by due date, age, skips.
+const STALE_DAYS = 7;
+const endOfTodayET = (now) => { const p = core.tzParts(now); return core.zonedToUtc(p.y, p.m, p.d, 23, 59).getTime() + 59999; };
+let DUE_CUTOFF = endOfTodayET(NOW);
+const dueNow = (c) => dueOf(c) <= DUE_CUTOFF;
 function rankCmp(a, b) {
+  const ta = dueNow(a) ? 0 : 1, tb = dueNow(b) ? 0 : 1;
   const da = dueOf(a), db = dueOf(b);
-  return (da === db ? 0 : da < db ? -1 : 1) || ageOf(a) - ageOf(b) || (b.skipCount || 0) - (a.skipCount || 0) || a.id.localeCompare(b.id);
+  return ta - tb || (da === db ? 0 : da < db ? -1 : 1) || ageOf(a) - ageOf(b) || (b.skipCount || 0) - (a.skipCount || 0) || a.id.localeCompare(b.id);
 }
 
 function assemble(cards, rows, now) {
@@ -77,11 +84,19 @@ function assemble(cards, rows, now) {
     for (const n of m.near) nearMisses.push({ id: c.id, title: c.title, item: n.item, sharedWords: n.words });
   }
   // 3) rank pending (non-snoozed) cards
+  DUE_CUTOFF = endOfTodayET(now);
   const pend = cards.filter((c) => !c.sample && core.isPending(c, now)).sort(rankCmp);
+  // 4) staleness flag (metadata only; title/body/details are never touched): pending 7+ days since it arrived
+  const stale = [];
+  for (const c of cards) {
+    const isStale = !c.withdrawn && c.status !== 'answered' && !c.sample && !c.builtin && now.getTime() - ageOf(c) >= STALE_DAYS * 864e5 && ageOf(c) > 0;
+    if (isStale) { if (c.stale !== true) c.stale = true; stale.push(c.id); } else if (c.stale !== undefined) delete c.stale;
+  }
+  const dueToday = pend.filter(dueNow).map((c) => c.id);
   pend.forEach((c, i) => { c.rank = i + 1; c.aboveFold = i < TOP_N; });
   for (const c of cards) if (!pend.includes(c) && (c.rank !== undefined || c.aboveFold !== undefined)) { delete c.rank; delete c.aboveFold; }
   const overdueSkipped3 = pend.filter((c) => dueOf(c) <= now.getTime() && (c.skipCount || 0) >= 3).map((c) => ({ id: c.id, title: c.title, due: c.dueAt || c.due, skipCount: c.skipCount }));
-  return { top5: pend.slice(0, TOP_N).map((c) => c.id), pendingCount: pend.length, closed, unsnoozed, nearMisses, overdueSkipped3 };
+  return { top5: pend.slice(0, TOP_N).map((c) => c.id), pendingCount: pend.length, dueToday, stale, closed, unsnoozed, nearMisses, overdueSkipped3 };
 }
 
 async function main() {
@@ -103,7 +118,7 @@ async function main() {
   const out = {
     time: NOW.toISOString(), dryRun: DRY, top5: result.top5, priorTop5,
     closed: result.closed, unsnoozed: result.unsnoozed, overdueSkipped3: result.overdueSkipped3, nearMisses: result.nearMisses,
-    pendingCount: result.pendingCount,
+    pendingCount: result.pendingCount, dueToday: result.dueToday, stale: result.stale,
     changed: result.cardsChanged || JSON.stringify(result.top5) !== JSON.stringify(priorTop5 || []),
   };
   if (!DRY) { core.mkdirPrivate(RUN_DIR); core.writeJsonAtomic(LAST_FILE, out); }
