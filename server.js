@@ -10,6 +10,9 @@ const core = require('./lib/core');
 const uploads = require('./lib/uploads');
 const push = require('./lib/push');
 const insights = require('./lib/insights');
+const pairing = require('./lib/pairing');
+const recap = require('./lib/recap');
+let QRCode = null; try { QRCode = require('qrcode'); } catch (_) { /* QR pairing disabled */ }
 
 // ---------- config (.env) ----------
 function loadEnv(file) {
@@ -82,9 +85,10 @@ function authed(req, url) {
 }
 // Always Secure (browsers treat http://127.0.0.1 and localhost as secure contexts, so local use still works) and
 // SameSite=Strict. See CROSS_SITE_BOUNCE below for how links from other apps still open the deck.
-function sessionCookie() {
-  return `${COOKIE}=${COOKIE_VALUE}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=31536000`;
+function sessionCookie(maxAge = 31536000) {
+  return `${COOKIE}=${COOKIE_VALUE}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
 }
+const PAIR_COOKIE_AGE = 180 * 86400; // QR-paired phones: ~180 days
 const SEC_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' };
 function send(res, status, body, headers = {}) {
   const isBuf = Buffer.isBuffer(body);
@@ -194,6 +198,58 @@ async function handleSignin(req, res) {
   if (raw && safeEq(raw, TOKEN)) { signinFails.delete(key); return json(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie() }); }
   const now = Date.now(); signinFails.get(key).push(now); signinGlobal.push(now);
   return json(res, 401, { error: 'That token didn\u2019t work. It may have been rotated.' });
+}
+
+// ---------- QR pairing ----------
+// The QR page and QR image are box-only: loopback socket, loopback Host header, no proxy/forwarding headers (the
+// Tailscale Funnel also connects from 127.0.0.1 but always adds X-Forwarded-For and the public Host), AND normal auth.
+const PUBLIC_URL = (process.env.MD_PUBLIC_URL || (() => { try { return fs.readFileSync(path.join(core.ROOT, 'run', 'tailscale.url'), 'utf8').trim(); } catch { return ''; } })() || 'https://morning-deck.tail164b96.ts.net').replace(/\/+$/, '');
+function isBoxLocal(req) {
+  const ra = req.socket.remoteAddress || '';
+  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ra)) return false;
+  for (const h of ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'forwarded', 'x-real-ip', 'tailscale-user-login', 'tailscale-funnel-request', 'cf-connecting-ip'])
+    if (req.headers[h] !== undefined) return false;
+  const host = String(req.headers.host || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+  return ['127.0.0.1', 'localhost', '::1'].includes(host);
+}
+// The code travels in the URL fragment (#...), so it never reaches any server log or proxy; the /pair page POSTs it.
+const pairUrl = (code) => `${PUBLIC_URL}/pair#${code}`;
+const PAIR_WINDOW = 15 * 60e3, PAIR_PER_CLIENT = 10, PAIR_GLOBAL = 40;
+const pairHits = new Map(); let pairGlobal = [];
+function pairBlocked(key, now = Date.now()) {
+  pairGlobal = pairGlobal.filter((t) => now - t < PAIR_WINDOW);
+  const mine = (pairHits.get(key) || []).filter((t) => now - t < PAIR_WINDOW); pairHits.set(key, mine);
+  const list = mine.length >= PAIR_PER_CLIENT ? mine : pairGlobal.length >= PAIR_GLOBAL ? pairGlobal : null;
+  return list ? Math.ceil((list[0] + PAIR_WINDOW - now) / 1000) : 0;
+}
+const PAIR_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>Morning Deck — pairing</title>${THEME_BOOT}<style>${LOCK_CSS}</style></head>
+<body><div class="md-lock"><div class="in"><img src="/icons/icon-192.png" width="72" height="72" alt=""><h1>Pairing this phone…</h1><p id="msg">One moment.</p></div></div>
+<script>(function(){var c=location.hash.slice(1);try{history.replaceState(null,'',location.pathname)}catch(e){}var m=document.getElementById('msg');
+if(!c){m.textContent='This pairing link is incomplete. Scan the QR code again.';return}
+fetch('/pair',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:c})}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
+if(r.ok){m.textContent='Paired. Opening your deck…';location.replace('/');return}
+m.textContent=r.status===429?'Too many attempts. Try again in '+Math.ceil((j.retryAfter||60)/60)+' min.':(j.error||'That code did not work.')})}).catch(function(){m.textContent='Could not reach Morning Deck.'})})();</script></body></html>`;
+async function handlePair(req, res) {
+  if (DEMO) return json(res, 404, { error: 'not found' });
+  if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: 'cross-site pairing refused' });
+  const key = signinKey(req); const wait = pairBlocked(key);
+  if (wait) return json(res, 429, { error: 'too many pairing attempts', retryAfter: wait }, { 'Retry-After': String(wait) });
+  const now = Date.now(); pairHits.get(key).push(now); pairGlobal.push(now); // every attempt counts, success or not
+  let code = ''; try { code = String(((await readBody(req, 1024)) || {}).code || ''); } catch (e) { return json(res, 400, { error: 'send JSON {"code": "..."}' }); }
+  if (!pairing.redeem(code)) return json(res, 401, { error: 'This pairing code is invalid, used, or expired (codes last 5 minutes). Make a new one on the box.' });
+  console.log(`${new Date().toISOString()} pairing: a device was paired via QR (180-day session)`);
+  return json(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(PAIR_COOKIE_AGE) });
+}
+async function qrPage(res) {
+  const { code, expiresAt } = pairing.create();
+  const svg = await QRCode.toString(pairUrl(code), { type: 'svg', margin: 2, errorCorrectionLevel: 'M', color: { dark: '#000000', light: '#ffffff' } });
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>Morning Deck — pair a phone</title>${THEME_BOOT}<style>${LOCK_CSS}
+.qr{background:#fff;border-radius:16px;padding:10px;width:240px;height:240px;margin:14px auto}.qr svg{width:100%;height:100%}</style></head>
+<body><div class="md-lock"><div class="in"><h1>Pair a phone</h1><p>Scan with the phone's camera. The code works once and expires in <b id="left">5:00</b>.</p>
+<div class="qr" id="qr" aria-label="Pairing QR code">${svg}</div><p class="note" id="exp" hidden>Expired.</p>
+<button type="button" onclick="location.reload()">New code</button><small style="margin-top:12px">Box-only page. The phone gets a 180-day session; the code is then burned.</small></div></div>
+<script>(function(){var end=${expiresAt},l=document.getElementById('left');function t(){var s=Math.max(0,Math.round((end-Date.now())/1000));l.textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');if(!s){document.getElementById('qr').style.opacity=.15;document.getElementById('exp').hidden=false;return}setTimeout(t,1000)}t()})();</script></body></html>`;
+  return send(res, 200, html, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
 }
 
 const CROSS_SITE_BOUNCE = '<script>location.replace(location.href)</script>';
@@ -504,6 +560,9 @@ const server = http.createServer(async (req, res) => {
     if (isPublic(url.pathname) && (req.method === 'GET' || req.method === 'HEAD')) return serveStatic(req, res, url);
     if (url.pathname === '/signin' && req.method === 'GET') return send(res, 200, lockPage(false), { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-MD-Lock': '1' });
     if (url.pathname === '/signin' && req.method === 'POST') return await handleSignin(req, res);
+    if (url.pathname === '/pair' && req.method === 'GET' && !DEMO) return send(res, 200, PAIR_PAGE, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    if (url.pathname === '/pair' && req.method === 'POST') return await handlePair(req, res);
+    if ((url.pathname === '/signin/qr' || url.pathname === '/api/pair/qr.png') && (DEMO || !isBoxLocal(req) || !QRCode)) return send(res, 404, 'not found', { 'Cache-Control': 'no-store' });
     const how = authed(req, url);
     if (!how) {
       if (url.pathname.startsWith('/api/')) return json(res, 401, { error: 'unauthorized: send Authorization: Bearer <token>', signin: '/signin' }, { 'X-MD-Lock': '1' });
@@ -519,6 +578,13 @@ const server = http.createServer(async (req, res) => {
       // First visit with ?token=: set the httpOnly cookie, then drop the token from the URL bar/history.
       url.searchParams.delete('token');
       return send(res, 302, 'redirecting', { 'Set-Cookie': sessionCookie(), Location: url.pathname + (url.search || ''), 'Cache-Control': 'no-store' });
+    }
+    if (url.pathname === '/signin/qr' && req.method === 'GET') return await qrPage(res);
+    if (url.pathname === '/api/pair/qr.png' && req.method === 'POST') {
+      if (how !== 'bearer') return json(res, 403, { error: 'needs Authorization: Bearer <token>' });
+      const { code, expiresAt } = pairing.create();
+      const png = await QRCode.toBuffer(pairUrl(code), { type: 'png', width: 512, margin: 2, errorCorrectionLevel: 'M' });
+      return send(res, 200, png, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'X-Pair-Expires': new Date(expiresAt).toISOString() });
     }
     if (isMainMenu(url.pathname)) return proxyMainMenu(req, res);
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url, how);

@@ -13,9 +13,12 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "playwright-core": "^1.59.1"
+    "jsqr": "^1.4.0",
+    "playwright-core": "^1.59.1",
+    "pngjs": "^7.0.0"
   },
   "dependencies": {
+    "qrcode": "^1.5.4",
     "web-push": "^3.6.7"
   }
 }
