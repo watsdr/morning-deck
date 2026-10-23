@@ -291,3 +291,29 @@ run/tailscale/          tailscaled state: node key, certs, funnel config (git-ig
 * **Theme:** Settings → Theme (Dark default, Light). Stored per device in `localStorage`.
 * **Reply = ask the bot:** the triple-tap sheet now reads "Reply or ask <bot> a question" so Derek can ask for more info.
 * Tests: `test/features.js` (routing fields, push/notify, History, wording, theme), `test/screens.js` (390x844 screenshots to `run/screens-<date>/`).
+
+## Off-disk backup and restore (Drive)
+
+- `node scripts/backup-drive.js` stages a backup set in `run/backup-staging/<YYYY-MM-DD_HHMMSS>/`: `cards.json`,
+  `answers.json`, `source.tar.gz` and `manifest.json` (sha256s, git commit, target folder). Local staging keeps the
+  newest 14 sets. The tarball is git-tracked + untracked-not-ignored files minus `.env*`, `*.key`, `*.crt`, `*.pem`,
+  keystores, token files, VAPID private keys, `*.bak*`, `data/ run/ logs/ bin/ node_modules/`; it is then scanned
+  (entry names, live token/VAPID values, PEM private-key blocks) and the set is discarded if anything is found.
+- Upload: a cron/node script on this box has no headless Google Drive credentials, so the upload is done by the agent
+  with the Drive connector: each file goes into the private folder **by id** `1Klpu5Yni9GVRtt1aFjLkW0sZxrfJB-Z1`
+  with its `driveTitle` from the manifest (`morning-deck_<set>_<file>`), then sets older than the newest 14 are trashed.
+- Restore: download the newest set's four files into one folder (drop the `morning-deck_<set>_` prefix), then
+  `scripts/restore.sh <that folder> [/workspace/morning-deck-restored]`. It verifies sha256s, clones
+  `github.com/watsdr/morning-deck`, checks out the backed-up commit if it was pushed, overlays the tarball (exact
+  source incl. unpushed work), runs `npm ci`, and installs the data files (600). It refuses a target that already has
+  `data/`, never touches the live app, and never creates secrets: copy the old `.env` or run `scripts/init-env.sh` +
+  `scripts/init-vapid.sh` (then re-pair phones with `scripts/pair-qr.sh`).
+
+## QR sign-in
+
+- On the box: open `http://127.0.0.1:8787/signin/qr` (box-only: loopback socket + loopback Host + no forwarding
+  headers, and normal auth), or run `scripts/pair-qr.sh` to write `run/pair-qr.png` (600). Scan with the phone.
+- The QR holds `https://morning-deck.tail164b96.ts.net/pair#<code>`; the code is in the fragment so it never reaches
+  any server or proxy log. The code is single-use, expires after 5 minutes and is kept only as a sha256 in memory.
+- `/pair` gives the phone a 180-day `md_session` (HttpOnly, Secure, SameSite=Strict) and burns the code.
+  Attempts are rate-limited (10 per client / 40 overall per 15 min).
