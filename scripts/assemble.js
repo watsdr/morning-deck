@@ -99,6 +99,27 @@ function assemble(cards, rows, now) {
   return { top5: pend.slice(0, TOP_N).map((c) => c.id), pendingCount: pend.length, dueToday, stale, closed, unsnoozed, nearMisses, overdueSkipped3 };
 }
 
+// ---- morning push: one notification per run to EXISTING subscriptions only; nothing when there are 0 cards ----
+// Only counts leave the box (never card text). VAPID keys are read from .env into process.env here (never printed).
+function pushText(n, due) { return `${n} card${n === 1 ? '' : 's'}` + (due ? ` · ${due} due today` : ''); }
+function loadVapidEnv() {
+  try {
+    const env = fs.readFileSync(path.join(core.ROOT, '.env'), 'utf8');
+    for (const m of env.matchAll(/^(MD_VAPID_(?:PUBLIC|PRIVATE|SUBJECT))=(.*)$/gm)) if (!process.env[m[1]]) process.env[m[1]] = m[2].trim().replace(/^['"]|['"]$/g, '');
+  } catch (_) { /* no .env: push stays disabled */ }
+}
+async function morningPush(out) {
+  const n = out.pendingCount || 0, due = (out.dueToday || []).length;
+  if (n === 0) return { skipped: '0 cards' };
+  const payload = { title: 'Morning Deck', body: pushText(n, due), url: '/', tag: 'morning-deck-ready', count: n };
+  if (process.env.MD_PUSH_CAPTURE) { fs.writeFileSync(process.env.MD_PUSH_CAPTURE, JSON.stringify(payload)); return { captured: true, body: payload.body }; }
+  loadVapidEnv();
+  const push = require('../lib/push');
+  if (!push.load().length) return { skipped: 'no subscriptions' };
+  if (!push.enabled()) return { skipped: 'push not configured' };
+  try { const r = await push.sendAll(payload); return { body: payload.body, sent: r.sent, failed: r.failed, removed: r.removed }; }
+  catch (e) { return { error: String(e.message || e).slice(0, 120) }; }
+}
 async function main() {
   const rows = parseResolved(RESOLVED);
   let prior = null; try { prior = JSON.parse(fs.readFileSync(LAST_FILE, 'utf8')); } catch (_) {}
@@ -121,9 +142,10 @@ async function main() {
     pendingCount: result.pendingCount, dueToday: result.dueToday, stale: result.stale,
     changed: result.cardsChanged || JSON.stringify(result.top5) !== JSON.stringify(priorTop5 || []),
   };
+  if (!DRY && !args.includes('--no-push')) out.push = await morningPush(out);
   if (!DRY) { core.mkdirPrivate(RUN_DIR); core.writeJsonAtomic(LAST_FILE, out); }
   console.log(JSON.stringify(out, null, 2));
   if (DRY) console.log(`(dry run: cards.json and ${path.relative(process.cwd(), LAST_FILE)} not written)`);
 }
 if (require.main === module) main().catch((e) => { console.error(`assemble failed: ${e.message}`); process.exit(1); });
-module.exports = { parseResolved, matchResolved, assemble, rankCmp };
+module.exports = { parseResolved, matchResolved, assemble, rankCmp, pushText, morningPush };
