@@ -12,6 +12,7 @@ const push = require('./lib/push');
 const insights = require('./lib/insights');
 const pairing = require('./lib/pairing');
 const recap = require('./lib/recap');
+const device = require('./lib/device-approval');
 let QRCode = null; try { QRCode = require('qrcode'); } catch (_) { /* QR pairing disabled */ }
 
 // ---------- config (.env) ----------
@@ -162,7 +163,16 @@ html[data-theme=light]{color-scheme:light;--bg:linear-gradient(180deg,#e9e3ff,#f
 .md-lock button{font:inherit;font-weight:600;font-size:16px;border:0;border-radius:12px;padding:12px;background:var(--btn);color:var(--btnfg);cursor:pointer}.md-lock button:disabled{opacity:.6}
 .md-lock .err{color:var(--err);min-height:1.4em;font-size:14px}.md-lock small{color:var(--sub);font-size:13px;line-height:1.45;display:block}`;
 // Form logic, inline on the page; app.js runs the same markup/script when an /api call 401s (it GETs /signin).
-const LOCK_SCRIPT = `(function(){var f=document.getElementById('mdSignin');if(!f)return;var t=f.querySelector('textarea'),b=f.querySelector('button'),e=document.getElementById('mdSigninErr');
+const LOCK_SCRIPT = `(function(){var d=document.getElementById('mdDevBtn');if(!d)return;var w=document.getElementById('mdDev'),de=document.getElementById('mdDevErr');
+d.addEventListener('click',function(){d.disabled=true;de.textContent='';fetch('/signin/request',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
+if(!r.ok){d.disabled=false;de.textContent=r.status===429?(j.error||'Too many requests. Try again later.'):(j.error||'Could not start a request.');return}
+var until=Date.parse(j.expiresAt);w.innerHTML='<p>Approve this code on the box:</p><p id="mdDevCode" style="font:700 34px/1.2 ui-monospace,monospace;letter-spacing:.18em;margin:6px 0;color:var(--fg)"></p><small id="mdDevWait">Waiting for approval…</small>';
+document.getElementById('mdDevCode').textContent=j.code;var wt=document.getElementById('mdDevWait');
+(function tick(){if(Date.now()>until){wt.textContent='This request expired. Reload to try again.';return}
+fetch('/signin/request/poll',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:j.code,secret:j.secret})}).then(function(r){return r.json().catch(function(){return{}})}).then(function(p){
+if(p.status==='approved'){wt.textContent='Approved. Opening your deck…';location.replace('/');return}if(p.status==='gone'){wt.textContent='This request expired or was refused. Reload to try again.';return}
+var m=Math.max(0,Math.ceil((until-Date.now())/60000));wt.textContent='Waiting for approval… ('+m+' min left)';setTimeout(tick,3000)}).catch(function(){setTimeout(tick,5000)})})()})}).catch(function(){d.disabled=false;de.textContent='Offline? Could not reach Morning Deck.'})})})();
+(function(){var f=document.getElementById('mdSignin');if(!f)return;var t=f.querySelector('textarea'),b=f.querySelector('button'),e=document.getElementById('mdSigninErr');
 f.addEventListener('submit',function(ev){ev.preventDefault();var v=t.value.trim();if(!v){e.textContent='Paste your token or sign-in link.';return}b.disabled=true;e.textContent='';
 fetch('/signin',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:v})}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
 if(r.ok){t.value='';location.replace('/');return}b.disabled=false;e.textContent=r.status===429?('Too many attempts. Try again in '+Math.ceil((j.retryAfter||60)/60)+' min.'):(j.error||'That token didn\\u2019t work.')})}).catch(function(){b.disabled=false;e.textContent='Offline? Could not reach Morning Deck.'})})})();`;
@@ -170,6 +180,7 @@ function lockHtml(stale) {
   return `<div class="md-lock" role="dialog" aria-modal="true" aria-labelledby="mdLockH"><div class="in"><img src="/icons/icon-192.png" width="72" height="72" alt=""><h1 id="mdLockH">Sign in again</h1>
 ${stale ? '<p class="note" id="mdStale">This link is out of date. Paste your current token or sign-in link below.</p>' : '<p>Morning Deck is private and this device isn\u2019t signed in (or its session expired).</p>'}
 <form id="mdSignin" autocomplete="off"><textarea name="token" aria-label="Token or sign-in link" placeholder="Paste your token or sign-in link" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea><div class="err" id="mdSigninErr" role="alert"></div><button type="submit">Sign in</button></form>
+<div id="mdDev"><button type="button" id="mdDevBtn">Request access from this phone</button><div class="err" id="mdDevErr" role="alert"></div></div>
 <small>Or open your private sign-in link (the one ending in <code>?token=…</code>) on this device.</small></div></div>`;
 }
 const THEME_BOOT = `<script>try{var m=localStorage.getItem("md_theme");if(m==="light"||(!m&&matchMedia("(prefers-color-scheme: light)").matches))document.documentElement.dataset.theme="light"}catch(e){}</script>`;
@@ -198,6 +209,30 @@ async function handleSignin(req, res) {
   if (raw && safeEq(raw, TOKEN)) { signinFails.delete(key); return json(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie() }); }
   const now = Date.now(); signinFails.get(key).push(now); signinGlobal.push(now);
   return json(res, 401, { error: 'That token didn\u2019t work. It may have been rotated.' });
+}
+
+// ---------- phone-only sign-in: device approval (lib/device-approval.js) ----------
+const DEVREQ_WINDOW = 15 * 60e3, DEVREQ_PER_CLIENT = 6; const devReqHits = new Map();
+async function handleDeviceRequest(req, res) {
+  if (DEMO) return json(res, 404, { error: 'not found' });
+  if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: 'cross-site request refused' });
+  const key = signinKey(req), now = Date.now();
+  const mine = (devReqHits.get(key) || []).filter((t) => now - t < DEVREQ_WINDOW); devReqHits.set(key, mine);
+  if (mine.length >= DEVREQ_PER_CLIENT) { const wait = Math.ceil((mine[0] + DEVREQ_WINDOW - now) / 1000); return json(res, 429, { error: 'Too many requests from this device. Try again later.', retryAfter: wait }, { 'Retry-After': String(wait) }); }
+  const ua = req.headers['user-agent'];
+  const r = device.create(ua, now);
+  if (!r) return json(res, 429, { error: `Too many pending requests (max ${device.MAX_PENDING}). Wait for one to expire (10 min).`, retryAfter: 60 }, { 'Retry-After': '60' });
+  mine.push(now);
+  console.log(`${new Date().toISOString()} device-approval: request ${r.code} ua="${device.info(r.code).ua}"`);
+  return json(res, 200, { code: r.code, secret: r.secret, expiresAt: new Date(r.expiresAt).toISOString(), pollEveryMs: 3000 }, { 'Cache-Control': 'no-store' });
+}
+async function handleDevicePoll(req, res) {
+  if (DEMO) return json(res, 404, { error: 'not found' });
+  if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: 'cross-site request refused' });
+  let b = {}; try { b = (await readBody(req, 1024)) || {}; } catch (e) { return json(res, 400, { error: 'send JSON {"code","secret"}' }); }
+  const st = device.poll(b.code, b.secret);
+  if (st === 'approved') return json(res, 200, { status: 'approved' }, { 'Set-Cookie': sessionCookie(PAIR_COOKIE_AGE), 'Cache-Control': 'no-store' });
+  return json(res, 200, { status: st }, { 'Cache-Control': 'no-store' });
 }
 
 // ---------- QR pairing ----------
@@ -567,6 +602,9 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/signin' && req.method === 'POST') return await handleSignin(req, res);
     if (url.pathname === '/pair' && req.method === 'GET' && !DEMO) return send(res, 200, PAIR_PAGE, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     if (url.pathname === '/pair' && req.method === 'POST') return await handlePair(req, res);
+    if (url.pathname === '/signin/request' && req.method === 'POST') return await handleDeviceRequest(req, res);
+    if (url.pathname === '/signin/request/poll' && req.method === 'POST') return await handleDevicePoll(req, res);
+    if (url.pathname.startsWith('/api/device/') && (DEMO || !isBoxLocal(req))) return send(res, 404, 'not found', { 'Cache-Control': 'no-store' });
     if ((url.pathname === '/signin/qr' || url.pathname === '/api/pair/qr.png') && (DEMO || !isBoxLocal(req) || !QRCode)) return send(res, 404, 'not found', { 'Cache-Control': 'no-store' });
     const how = authed(req, url);
     if (!how) {
@@ -590,6 +628,16 @@ const server = http.createServer(async (req, res) => {
       const { code, expiresAt } = pairing.create();
       const png = await QRCode.toBuffer(pairUrl(code), { type: 'png', width: 512, margin: 2, errorCorrectionLevel: 'M' });
       return send(res, 200, png, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'X-Pair-Expires': new Date(expiresAt).toISOString() });
+    }
+    // Box-only (checked above) + Bearer: look up / approve a phone's access request by its 6-character code.
+    if ((url.pathname === '/api/device/info' || url.pathname === '/api/device/approve') && req.method === 'POST') {
+      if (how !== 'bearer') return json(res, 403, { error: 'needs Authorization: Bearer <token>' });
+      let b = {}; try { b = (await readBody(req, 1024)) || {}; } catch (e) { return json(res, 400, { error: 'send JSON {"code"}' }); }
+      if (url.pathname === '/api/device/info') { const i = device.info(b.code); return i ? json(res, 200, { ...i, createdAt: new Date(i.createdAt).toISOString(), expiresAt: new Date(i.expiresAt).toISOString() }) : json(res, 404, { error: 'no pending request with that code (expired?)' }); }
+      const a = device.approve(b.code);
+      if (!a) return json(res, 404, { error: 'no pending request with that code (expired?)' });
+      console.log(`${new Date().toISOString()} device-approval: approved ${a.code} ua="${a.ua}" (180-day session)`);
+      return json(res, 200, { ok: true, code: a.code, ua: a.ua });
     }
     if (isMainMenu(url.pathname)) return proxyMainMenu(req, res);
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url, how);
