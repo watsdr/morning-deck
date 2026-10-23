@@ -1,5 +1,5 @@
 /* Morning Deck service worker: cache the app shell, network-first for the API. */
-const VERSION = 'md-v13'; // bump on every app release so phones pick up the new shell
+const VERSION = 'md-v14'; // bump on every app release so phones pick up the new shell
 const cacheable = (res) => res.ok && res.status === 200 && res.type === 'basic' && !res.headers.get('X-MD-Lock');
 const SHELL_CACHE = `${VERSION}-shell`;
 const API_CACHE = `${VERSION}-api`;

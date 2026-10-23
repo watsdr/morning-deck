@@ -39,7 +39,7 @@ const deckShown = (page) => page.waitForSelector('.card[data-id]', { timeout: 80
     check('stale cookie + SW-cached shell: full-screen overlay from /api 401', await lockShown(page) && !!await page.$('.md-lock.over'));
     const inCache = await page.evaluate(async () => { const bad = []; for (const k of await caches.keys()) { const c = await caches.open(k); for (const q of await c.keys()) { const res = await c.match(q); const body = await res.clone().text(); if (res.status !== 200 || res.headers.get('X-MD-Lock') || body.includes('md-lock') && body.includes('mdSignin')) bad.push(k + ' ' + new URL(q.url).pathname + ' ' + res.status); } } return { bad, keys: await caches.keys() }; });
     check('SW caches hold no 401 / lock page', inCache.bad.length === 0, inCache.bad.join(', '));
-    check('SW version bumped (md-v13)', inCache.keys.some((k) => k.startsWith('md-v13')), inCache.keys.join(','));
+    { const V = (require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'sw.js'), 'utf8').match(/VERSION = '([^']+)'/) || [])[1]; check(`SW version is current (${V})`, inCache.keys.some((k) => k.startsWith(V + '-')), inCache.keys.join(',')); }
     const swSrc = await (await fetch(`${BASE}/sw.js`)).text();
     check('SW code refuses non-200 / X-MD-Lock responses', /cacheable = \(res\) => res\.ok && res\.status === 200/.test(swSrc) && swSrc.includes('X-MD-Lock'));
     await ctx.close();

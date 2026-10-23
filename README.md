@@ -317,3 +317,16 @@ run/tailscale/          tailscaled state: node key, certs, funnel config (git-ig
   any server or proxy log. The code is single-use, expires after 5 minutes and is kept only as a sha256 in memory.
 - `/pair` gives the phone a 180-day `md_session` (HttpOnly, Secure, SameSite=Strict) and burns the code.
   Attempts are rate-limited (10 per client / 40 overall per 15 min).
+
+## Batch 2 (2026-10-22)
+- **Due dates**: cards show a due line (`dueAt`, alias `due`; cards with only `expiresAt` show "Respond by"). `scripts/assemble.js`
+  ranks anything due by end of today (ET) or overdue first, and sets `stale: true` on cards pending 7+ days (UI: "Still relevant?").
+- **Morning push**: after a real run, assemble sends one count-only notification ("5 cards · 1 due today") to existing subscriptions;
+  nothing at 0 cards. `--no-push` / `--dry-run` skip it. Same tag as `/api/notify`, so the two never stack.
+- **Voice**: the card sheet has "Read aloud" (speechSynthesis) and "Answer by voice" (Web Speech API): yes/no/later/skip →
+  right/left/up/down, always shown for confirmation; only "Record" saves the answer.
+- **Weekly recap**: `GET /api/recap` (auth as /api/deck), computed on the fly; tile "Recap", Settings row, or `/?view=recap`.
+- **App tiles**: Main Menu (`/main-menu/`) and Lantern Isle (`/hub-world/`) under the header.
+- **Manifest shortcuts** (Deck, Recap, Main Menu) and the App Badging API (pending count). A real home-screen widget needs the
+  Android project at /workspace/morning-deck-android.
+- Tests: `node test/due-stale.js`, `node test/isolated.js test/assemble-push.js`, `node test/isolated.js test/screens-batch2.js --empty`.

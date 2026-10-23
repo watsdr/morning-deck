@@ -739,3 +739,23 @@ html[data-theme="light"] .panel-backdrop { background: rgba(36, 18, 63, .35); }
 .due-line.due-later { background: #ece8ff; color: #3a2870; }
 .chip.chip-relevant { background: #3a2870; color: #fff; }
 .sheet-due { margin: 0 0 10px; }
+/* voice: read aloud + answer by voice */
+.sheet-voice { margin: 12px 0 4px; }
+.voice-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.vbtn { min-height: 40px; padding: 8px 14px; border-radius: 999px; border: 1px solid rgba(124,108,242,.45); background: rgba(124,108,242,.12); color: inherit; font: inherit; font-weight: 700; cursor: pointer; }
+.voice-hint { margin: 6px 0 0; font-size: 13px; opacity: .75; }
+.voice-confirm { padding: 12px; border-radius: 14px; background: rgba(124,108,242,.12); }
+.voice-confirm p { margin: 0 0 6px; }
+.voice-actions { display: flex; gap: 8px; justify-content: flex-end; }
+/* app tiles row (Main Menu, Lantern Isle, Recap) */
+.app-tiles { display: flex; gap: 8px; padding: 0 20px 10px; overflow-x: auto; scrollbar-width: none; }
+.app-tile { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 38px; padding: 6px 12px; border-radius: 14px; background: rgba(58, 40, 112, .55); border: 1px solid rgba(255, 255, 255, .18); color: #fff; font: inherit; font-size: 13.5px; font-weight: 750; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.app-tile:active { transform: scale(.96); }
+.app-tile-ico { font-size: 16px; }
+/* weekly recap */
+.recap-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.recap-row { padding: 10px 12px; border-radius: 14px; background: var(--p-row); }
+.recap-row b { display: block; font-size: 14px; }
+.recap-row small { display: block; font-size: 12px; color: var(--p-ink-3); margin-top: 2px; }
+.recap-row.recap-top { border-left: 3px solid var(--up); }
+html[data-theme="light"] .app-tile { background: rgba(255, 255, 255, .7); border-color: rgba(29, 24, 50, .12); color: var(--ink); }

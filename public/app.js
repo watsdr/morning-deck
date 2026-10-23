@@ -404,8 +404,11 @@
     const n = state.deck.filter((c) => !c.divider).length + ((state.belowFold && state.belowFold.length) || 0);
     if (el.count.textContent !== String(n)) {
       el.count.textContent = n;
+
       if (!reduced() && el.count.animate) el.count.animate([{ scale: 1 }, { scale: 1.35, offset: 0.4 }, { scale: 1 }], { duration: 450, easing: 'cubic-bezier(.2, 1.35, .35, 1)' }); // compositor bump, no forced reflow
     }
+    // App badge (installed PWA): pending count on the home-screen icon; cleared at 0.
+    if (state.loaded && state.badgeN !== n && 'setAppBadge' in navigator) { state.badgeN = n; try { (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); } catch (_) {} }
     const done = state.session.length;
     const frac = done + n ? done / (done + n) : (state.loaded ? 1 : 0);
     el.progress.style.transform = `translateX(${((frac - 1) * 100).toFixed(2)}%)`; // transform, not width: no layout per frame
@@ -814,6 +817,7 @@
     clearPhotos();
     for (const p of photos) addPhotoEntry(p);
     setSheetMode(gesture);
+    renderVoice(card);
     if (dragReset.sheet) dragReset.sheet();
     el.sheetWrap.classList.remove('closing', 'kb'); el.sheetWrap.hidden = false;
     syncViewport();
@@ -844,7 +848,69 @@
     el.sheetWrap.style.setProperty('--mode-c', COLORS[state.sheetGesture]);
     updateSave();
   }
+  // ---------- voice (2026-10-22): read aloud (speechSynthesis) + answer by voice (Web Speech API) ----------
+  // Voice never records by itself: what was heard is shown with the mapped decision and only "Record" swipes.
+  const VOICE_MAP = { right: ['yes', 'yeah', 'yep', 'approve', 'ok', 'okay', 'sure'], left: ['no', 'nope', 'deny', 'reject'],
+    up: ['later', 'snooze', 'not now', 'tomorrow'], down: ['skip', 'pass', 'next'] };
+  function voiceDir(text) {
+    const t = ` ${String(text || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ')} `;
+    for (const d of DIRS) if (VOICE_MAP[d].some((w) => t.includes(` ${w} `))) return d;
+    return null;
+  }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function stopVoice() { try { window.speechSynthesis && speechSynthesis.cancel(); } catch (_) {} if (state.rec) { try { state.rec.abort(); } catch (_) {} state.rec = null; } }
+  function renderVoice(card, msg) {
+    const box = $('#sheetVoice'); if (!box) return; box.innerHTML = '';
+    if (!card || card.divider) return;
+    const row = h('div', { class: 'voice-row' });
+    if ('speechSynthesis' in window) {
+      const rb = h('button', { type: 'button', class: 'vbtn', id: 'readAloudBtn', 'aria-label': 'Read this card aloud' }, '🔊 Read aloud');
+      rb.addEventListener('click', () => {
+        if (speechSynthesis.speaking) { speechSynthesis.cancel(); return; }
+        const u = new SpeechSynthesisUtterance([card.source, card.title, card.body, card.details].filter(Boolean).join('. '));
+        u.lang = 'en-US'; speechSynthesis.speak(u);
+      });
+      row.append(rb);
+    }
+    if (SR) {
+      const mb = h('button', { type: 'button', class: 'vbtn', id: 'voiceAnswerBtn', 'aria-label': 'Answer by voice' }, '🎙 Answer by voice');
+      mb.addEventListener('click', () => listen(card));
+      row.append(mb);
+    } else row.append(h('span', { class: 'voice-hint' }, 'Voice answers need a browser with speech recognition.'));
+    box.append(row);
+    const labels = DIRS.filter((d) => card.gestures[d] && !card.gestures[d].disabled).map((d) => `“${VOICE_MAP[d][0]}” = ${card.gestures[d].label}`);
+    box.append(h('p', { class: 'voice-hint' }, msg || `Say ${labels.join(' · ')}`));
+  }
+  function confirmVoice(card, heard, dir) {
+    const box = $('#sheetVoice'); box.innerHTML = '';
+    const g = dir && card.gestures[dir];
+    if (!g || g.disabled) { renderVoice(card, `Heard “${heard || '…'}”. Try yes, no, later or skip.`); return; }
+    const ok = h('button', { type: 'button', class: 'primary-btn', id: 'voiceConfirm' }, `Record “${g.label}”`);
+    const no = h('button', { type: 'button', class: 'ghost-btn', id: 'voiceCancel' }, 'Cancel');
+    ok.addEventListener('click', () => { closeSheet(); setTimeout(() => swipe(dir), 260); });
+    no.addEventListener('click', () => renderVoice(card));
+    box.append(h('div', { class: 'voice-confirm', role: 'alertdialog', 'aria-label': 'Confirm voice answer' },
+      h('p', {}, 'Heard “', h('b', {}, heard), '” → ', h('b', { style: `color:${COLORS[dir]}` }, `${{ right: '→', left: '←', up: '↑', down: '↓' }[dir]} ${g.label}`)),
+      h('p', { class: 'voice-hint' }, 'Nothing is recorded until you tap Record.'), h('div', { class: 'voice-actions' }, no, ok)));
+  }
+  function listen(card) {
+    stopVoice();
+    const rec = new SR(); state.rec = rec;
+    rec.lang = 'en-US'; rec.interimResults = false; rec.maxAlternatives = 3;
+    renderVoice(card, 'Listening… say yes, no, later or skip.');
+    rec.onresult = (e) => {
+      const alts = Array.from(e.results[0] || []).map((a) => a.transcript);
+      const hit = alts.find((a) => voiceDir(a)) || alts[0] || '';
+      state.rec = null; confirmVoice(card, hit.trim(), voiceDir(hit));
+    };
+    rec.onerror = (e) => { state.rec = null; renderVoice(card, e.error === 'not-allowed' ? 'Microphone permission was denied.' : 'Didn’t catch that. Try again.'); };
+    rec.onend = () => { if (state.rec === rec) { state.rec = null; renderVoice(card, 'Didn’t catch that. Try again.'); } };
+    try { rec.start(); } catch (_) { renderVoice(card, 'Voice input could not start.'); }
+  }
+  window.__mdVoice = { voiceDir, confirmVoice: (heard) => state.sheetCard && confirmVoice(state.sheetCard, heard, voiceDir(heard)) };
+
   function closeSheet() {
+    stopVoice();
     if (!state.sheetCard) return;
     state.sheetCard = null;
     el.reply.blur();
@@ -1316,17 +1382,21 @@
   applyTheme(currentTheme());
 
   const panels = {
-    settings: $('#settingsWrap'), history: $('#historyWrap'), insights: $('#insightsWrap'),
-    open() { return !this.settings.hidden || !this.history.hidden || !this.insights.hidden; },
+    settings: $('#settingsWrap'), history: $('#historyWrap'), insights: $('#insightsWrap'), recap: $('#recapWrap'),
+    open() { return !this.settings.hidden || !this.history.hidden || !this.insights.hidden || !this.recap.hidden; },
     show(name) { this[name].hidden = false; const x = this[name].querySelector('.panel-x'); if (x) x.focus({ preventScroll: true }); },
     close(name) { this[name].hidden = true; },
-    closeTop() { if (!this.insights.hidden) this.close('insights'); else if (!this.history.hidden) this.close('history'); else this.close('settings'); },
+    closeTop() { if (!this.recap.hidden) this.close('recap'); else if (!this.insights.hidden) this.close('insights'); else if (!this.history.hidden) this.close('history'); else this.close('settings'); },
   };
   document.querySelectorAll('[data-close]').forEach((n) => n.addEventListener('click', () => panels.close(n.dataset.close)));
   $('#settingsBtn').addEventListener('click', () => { panels.show('settings'); refreshNotify(); });
   $('#historyBtn').addEventListener('click', () => { panels.show('history'); loadHistory(); });
   $('#insightsBtn').addEventListener('click', () => { panels.show('insights'); loadInsights(); });
   $('#insightsRowBtn').addEventListener('click', () => { panels.show('insights'); loadInsights(); });
+  const openRecap = () => { panels.show('recap'); loadRecap(); };
+  $('#recapRowBtn').addEventListener('click', openRecap);
+  $('#tileRecap').addEventListener('click', openRecap);
+  if (new URLSearchParams(location.search).get('view') === 'recap') setTimeout(openRecap, 0); // manifest shortcut
 
   // ---------- Insights: GET /api/insights (read-only). Hand-built SVG, no chart library. ----------
   const SVGNS = 'http://www.w3.org/2000/svg';
@@ -1394,6 +1464,26 @@
     return li;
   }
   function section(title, sub, ...kids) { return h('section', { class: 'ins-sec' }, h('div', { class: 'ins-sec-head' }, h('h4', {}, title), sub ? h('small', {}, sub) : null), ...kids); }
+  // ---------- weekly recap (computed by GET /api/recap; read-only) ----------
+  async function loadRecap() {
+    const body = $('#recapBody');
+    let d;
+    try { d = await api('/api/recap'); } catch (e) { body.innerHTML = ''; body.append(h('p', { class: 'panel-sub' }, e.status === 401 ? 'Signed out.' : 'Could not load the recap (offline?)')); return; }
+    const frag = document.createDocumentFragment();
+    const since = new Date(d.weekStart).toLocaleDateString('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' });
+    const tile = (n, l, cls = '') => h('div', { class: 'ins-tile ' + cls }, h('b', {}, n), h('small', {}, l));
+    frag.append(h('p', { class: 'ins-note' }, `Since ${since}${d.demo ? ' · Demo: SAMPLE data, nothing is kept' : ''}`));
+    frag.append(h('div', { class: 'ins-tiles' }, tile(d.counts.decisions, 'Decisions', d.counts.decisions ? 'ok' : ''), tile(d.counts.skips, 'Skips'), tile(d.counts.snoozes, 'Snoozes'), tile(d.counts.open, 'Still open', d.counts.open ? 'warn' : 'ok')));
+    const when = (t) => new Date(t).toLocaleDateString('en-US', { timeZone: TZ, weekday: 'short' }) + ' ' + new Date(t).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' });
+    const list = (items, row, empty) => items.length ? h('ul', { class: 'recap-list' }, ...items.map(row)) : h('p', { class: 'panel-sub' }, empty);
+    frag.append(section('Decisions made', `${d.decisions.length} this week`, list(d.decisions.slice(0, 20), (a) => h('li', { class: 'recap-row' },
+      h('b', {}, a.title || a.cardId), h('small', {}, `${a.label || a.gesture}${a.text ? ` · “${a.text}”` : ''} · ${a.source || ''} · ${when(a.at)}`)), 'No decisions recorded yet this week.')));
+    frag.append(section('Longest skipped', 'Open cards that keep slipping', list(d.longestSkipped, (r) => h('li', { class: 'recap-row' },
+      h('b', {}, `${r.emoji || ''} ${r.title}`.trim()), h('small', {}, `${r.skips} skip${r.skips === 1 ? '' : 's'} · ${r.snoozes} snooze${r.snoozes === 1 ? '' : 's'} · pending ${r.daysPending}d · ${r.source || ''}`)), 'Nothing is being skipped.')));
+    frag.append(section('Waiting on you the most', 'Open cards per bot, summed days pending', list(d.waitingOn, (b, i) => h('li', { class: 'recap-row' + (i === 0 ? ' recap-top' : '') },
+      h('b', {}, `${b.emoji || '🤖'} ${b.source}`), h('small', {}, `${b.open} open · ${b.waitingDays} day${b.waitingDays === 1 ? '' : 's'} waiting · oldest ${b.oldestDays}d`)), 'No bot is waiting on you.')));
+    body.innerHTML = ''; body.append(frag);
+  }
   async function loadInsights() {
     const body = $('#insightsBody');
     let data;

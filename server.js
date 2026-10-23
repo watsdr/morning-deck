@@ -344,6 +344,11 @@ async function handleApi(req, res, url, how) {
     if (DEMO) return json(res, 200, { demo: true, ...insights.compute({ answers: [] }) });
     return json(res, 200, insights.compute());
   }
+  // Weekly recap (computed on the fly from answers + insights; read-only, never a card).
+  if (p === '/api/recap' && req.method === 'GET') {
+    if (DEMO) return json(res, 200, { demo: true, ...recap.compute({ answers: [], withBackups: false }) });
+    return json(res, 200, recap.compute());
+  }
   if (p === '/api/cards' && req.method === 'GET') {
     return json(res, 200, { cards: core.loadCards().map(cardForClient) });
   }

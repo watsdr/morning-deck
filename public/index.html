@@ -40,6 +40,11 @@
       </button>
       <div class="counter" id="counter" aria-live="polite"><span id="countNum">0</span><small>left</small></div>
     </header>
+    <nav class="app-tiles" id="appTiles" aria-label="Apps">
+      <a class="app-tile" href="/main-menu/" id="tileMainMenu"><span class="app-tile-ico" aria-hidden="true">🧭</span><span>Main Menu</span></a>
+      <a class="app-tile" href="/hub-world/" id="tileHubWorld"><span class="app-tile-ico" aria-hidden="true">🏝️</span><span>Lantern Isle</span></a>
+      <button class="app-tile" type="button" id="tileRecap"><span class="app-tile-ico" aria-hidden="true">🗓️</span><span>Recap</span></button>
+    </nav>
     <div class="progress" aria-hidden="true"><div class="progress-fill" id="progressFill"></div></div>
 
     <div class="demo-banner" id="demoBanner" hidden><b>Demo</b><span>Try the swipes · nothing is saved</span></div>
@@ -117,6 +122,10 @@
           <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></span>
           <span class="set-txt"><b>History</b><small>Your past answers, newest first</small></span><span class="set-chev" aria-hidden="true">›</span>
         </button>
+        <button type="button" class="set-row" id="recapRowBtn">
+          <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg></span>
+          <span class="set-txt"><b>Weekly recap</b><small>Decisions this week, what keeps slipping</small></span><span class="set-chev" aria-hidden="true">›</span>
+        </button>
         <button type="button" class="set-row" id="insightsRowBtn">
           <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg></span>
           <span class="set-txt"><b>Insights</b><small>What keeps getting skipped, what's due</small></span><span class="set-chev" aria-hidden="true">›</span>
@@ -148,6 +157,14 @@
     </section>
   </div>
 
+  <div class="panel-wrap" id="recapWrap" hidden>
+    <div class="panel-backdrop" data-close="recap"></div>
+    <section class="panel panel-tall" id="recapPanel" role="dialog" aria-modal="true" aria-labelledby="recapTitle">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="panel-head"><h3 id="recapTitle">This week</h3><button type="button" class="panel-x" data-close="recap" aria-label="Close weekly recap">✕</button></div>
+      <div class="ins-scroll" id="recapBody"><p class="panel-sub">Loading…</p></div>
+    </section>
+  </div>
   <div class="panel-wrap" id="insightsWrap" hidden>
     <div class="panel-backdrop" data-close="insights"></div>
     <section class="panel panel-tall" id="insightsPanel" role="dialog" aria-modal="true" aria-labelledby="insightsTitle">
@@ -168,6 +185,7 @@
         <p class="sheet-body" id="sheetBody"></p>
         <div class="sheet-details" id="sheetDetails"></div>
         <div class="sheet-quick" id="sheetQuick"></div>
+        <div class="sheet-voice" id="sheetVoice"></div>
       </div>
       <div class="sheet-compose" id="sheetCompose">
         <label class="sheet-label" for="replyText" id="replyLabel">Your reply</label>
