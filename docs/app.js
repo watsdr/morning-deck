@@ -16,7 +16,7 @@
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
   const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
-  const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} };
+  const buzz = (p) => { if (reduced()) return; try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} };
 
   const MAX_PHOTOS = 6, MAX_EDGE = 1600, PHOTO_QUALITY = 0.85, MAX_UPLOAD = 8 * 1024 * 1024;
   const dragReset = {}; // swipe-down-to-dismiss resets per sheet (filled in by sheetDrag below)
@@ -350,6 +350,8 @@
 
   function renderCleared(celebrate) {
     el.cleared.hidden = false;
+    const heading = el.cleared.querySelector('h2');
+    if (heading) heading.textContent = reduced() ? 'All done' : 'All caught up';
     const list = state.session.length ? state.session.map((e) => ({ card: e.card, gesture: e.gesture, label: e.card.gestures[e.gesture].label, text: e.payload.text, pics: e.photos.length }))
       : (state.todayAnswers || []).map((a) => ({ card: { title: a.cardTitle, source: a.source, emoji: a.builtin ? '🌅' : '' }, gesture: a.gesture, label: a.label, text: a.text, pics: (a.attachments || []).length }));
     $('#clearedSub').textContent = list.length
@@ -584,8 +586,17 @@
     return (t) => { const e = Math.exp(-z * w0 * t), c = Math.cos(wd * t), s = Math.sin(wd * t); return [e * (x0 * c + B * s), e * ((B * wd - z * w0 * x0) * c - (x0 * wd + z * w0 * B) * s)]; };
   }
   function springBack(node, from, v) {
+    if (reduced()) {
+      // Short slide back to rest instead of the damped spring (tilt included).
+      node._pos = null;
+      node.classList.remove('dragging');
+      clearFeedback(node);
+      node.classList.add('rm-short');
+      requestAnimationFrame(() => { node.style.transform = ''; });
+      setTimeout(() => { node.classList.remove('rm-short'); if (!drag) live(false); }, 200);
+      return;
+    }
     node.classList.add('dragging');
-    if (reduced()) { node._pos = null; node.style.transform = ''; node.classList.remove('dragging'); clearFeedback(node); if (!drag) live(false); return; }
     resetFx(node);
     live(true);
     const sx = springAxis(from.x, v.x * 1000), sy = springAxis(from.y, v.y * 1000), sr = springAxis(from.rot, 0);
@@ -636,7 +647,18 @@
       for (const d of DIRS) { actBtn[d].style.transform = ''; actBtn[d]._t = ''; }
       if (!topAnim) live(false);
     };
-    if (reduced()) { commit(card, dir, opts.text, opts.photos); node.style.transition = 'opacity .15s'; node.style.opacity = 0; setTimeout(finish, 160); return; }
+    if (reduced()) {
+      commit(card, dir, opts.text, opts.photos);
+      node.classList.remove('dragging');
+      node.classList.add('rm-short');
+      const nudge = 28;
+      const dx = dir === 'right' ? nudge : dir === 'left' ? -nudge : 0;
+      const dy = dir === 'down' ? nudge : dir === 'up' ? -nudge : 0;
+      const x = from.x + dx, y = from.y + dy;
+      requestAnimationFrame(() => { node.style.opacity = '0'; node.style.transform = `translate3d(${r3(x)}px, ${r3(y)}px, 0)`; });
+      setTimeout(finish, 200);
+      return;
+    }
     // Same physics as before, pre-computed into keyframes at 120 Hz and handed to the compositor.
     const kf = [{ transform: `translate3d(${r3(x)}px, ${r3(y)}px, 0) rotate(${r3(r)}deg)` }];
     const dt = 1 / 120; let t = 0;
@@ -797,7 +819,12 @@
     const ring = node.querySelector('.card-ring'); ring.style.setProperty('--glow', rgba(COLORS.tap3, 0.9)); ring.style.opacity = 1;
     node.style.boxShadow = `0 0 60px ${rgba(COLORS.tap3, 0.6)}`;
     commit(card, 'tap3', text, photos);
-    if (reduced()) { node.remove(); return; }
+    if (reduced()) {
+      node.classList.add('rm-short');
+      requestAnimationFrame(() => { node.style.opacity = '0'; node.style.transform = 'translate3d(0,-24px,0)'; });
+      setTimeout(() => node.remove(), 200);
+      return;
+    }
     node.style.transition = 'transform .55s cubic-bezier(.5,-0.4,.7,.4), opacity .5s ease-in';
     setTimeout(() => { node.style.transform = 'translate3d(0,-120%,0) scale(.7) rotate(-6deg)'; node.style.opacity = 0; }, 260);
     setTimeout(() => node.remove(), 900);
@@ -1012,7 +1039,11 @@
   // Light: ~130 pieces, canvas capped at 1.5x pixels, one setTransform per piece (no save/restore), batched by colour.
   let confettiRun = null;
   function confetti() {
-    if (reduced()) return;
+    if (reduced()) {
+      const cv = $('#confetti');
+      if (cv) { cv.hidden = true; cv.width = 0; cv.height = 0; }
+      return;
+    }
     if (confettiRun) confettiRun.stop();
     const cv = $('#confetti'); const ctx = cv.getContext('2d');
     const dpr = Math.min(1.5, window.devicePixelRatio || 1);

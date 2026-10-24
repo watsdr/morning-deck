@@ -572,7 +572,14 @@ textarea:focus { border-color: var(--tap3); box-shadow: 0 0 0 4px color-mix(in s
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
-  .blob, .stars, .sunrise .rays { animation: none !important; }
+  .blob, .stars, .sunrise .sun, .sunrise .rays,
+  .cleared, .cleared h2, .cleared-sub, .summary-chips .s, .summary-list li { animation: none !important; }
+  /* Card fly-off and spring-back: a quick fade / short slide, not the full spring. */
+  .card.rm-short {
+    transition-property: transform, opacity !important;
+    transition-duration: 180ms !important;
+    transition-timing-function: ease-out, linear !important;
+  }
 }
 
 /* optional link button in the reply sheet (card.link) */
