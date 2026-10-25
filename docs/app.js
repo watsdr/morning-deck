@@ -4,7 +4,7 @@
 (() => {
   'use strict';
   const $ = (s, r = document) => r.querySelector(s);
-  const TZ = window.MD_TZ || 'America/New_York'; // the friends app sets the device's own time zone
+  const TZ = 'America/New_York';
   const DIRS = ['right', 'left', 'up', 'down'];
   const COLORS = { right: '#19c37d', left: '#ff4f6d', up: '#ffaa1f', down: '#8b7cf6', tap3: '#38b6ff', undo: '#b08b2e' };
   const ICONS = {
@@ -16,7 +16,7 @@
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
   const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
-  const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} };
+  const buzz = (p) => { if (reduced()) return; try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} };
 
   const MAX_PHOTOS = 6, MAX_EDGE = 1600, PHOTO_QUALITY = 0.85, MAX_UPLOAD = 8 * 1024 * 1024;
   const dragReset = {}; // swipe-down-to-dismiss resets per sheet (filled in by sheetDrag below)
@@ -47,6 +47,30 @@
     const sameDay = d.toLocaleDateString('en-US', { timeZone: TZ }) === new Date().toLocaleDateString('en-US', { timeZone: TZ });
     return sameDay ? `${t} · ${rel}` : `${d.toLocaleDateString('en-US', { timeZone: TZ, month: 'short', day: 'numeric' })}, ${t}`;
   }
+  // How long a card has waited / how soon it expires: a nudge for the ones that slipped past earlier mornings.
+  function ageChip(card, now = Date.now()) {
+    if (card.builtin) return null;
+    const exp = card.expiresAt ? Date.parse(card.expiresAt) - now : NaN;
+    if (exp > 0 && exp < 12 * 3600e3) { const hrs = Math.max(1, Math.round(exp / 3600e3)); return { cls: 'chip-due', text: `Expires in ${hrs}h` }; }
+    const age = now - Date.parse(card.createdAt);
+    if (age >= 24 * 3600e3) { const d = Math.floor(age / 86400e3); return { cls: 'chip-stale', text: `Waiting ${d} day${d > 1 ? 's' : ''}` }; }
+    return null;
+  }
+  // Due date shown prominently on the card: dueAt (or `due`); a card with only expiresAt shows "Respond by".
+  const etDay = (t) => new Date(t).toLocaleDateString('en-CA', { timeZone: TZ });
+  function dueInfo(card, now = Date.now()) {
+    if (card.builtin) return null;
+    const raw = card.dueAt || card.due || card.expiresAt; const t = raw ? Date.parse(raw) : NaN;
+    if (Number.isNaN(t)) return null;
+    const word = card.dueAt || card.due ? 'Due' : 'Respond by';
+    const time = new Date(t).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' });
+    const day = new Date(t).toLocaleDateString('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' });
+    const today = etDay(now), d = etDay(t), tomorrow = etDay(now + 864e5);
+    if (t < now) return { cls: 'due-over', text: `Overdue · ${word.toLowerCase()} ${d === today ? time : day}` };
+    if (d === today) return { cls: 'due-today', text: `${word} today · ${time}` };
+    if (d === tomorrow) return { cls: 'due-soon', text: `${word} tomorrow · ${time}` };
+    return { cls: 'due-later', text: `${word} ${day}` };
+  }
   // Display name comes from the server (MD_GREETING_NAME); cached so the header doesn't flicker on the next launch.
   const NAME_KEY = 'md_greeting_name';
   const config = { demo: false, uploads: true, greetingName: (() => { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } })() };
@@ -60,7 +84,7 @@
   async function loadConfig() {
     try {
       const c = await api('/api/config');
-      Object.assign(config, { demo: !!c.demo, uploads: c.uploads !== false, greetingName: c.greetingName || '', clearedNote: c.clearedNote || '', snoozeNote: c.snoozeNote });
+      Object.assign(config, { demo: !!c.demo, uploads: c.uploads !== false, greetingName: c.greetingName || '' });
       try { localStorage.setItem(NAME_KEY, config.greetingName); } catch (_) {}
     } catch (_) { /* older server or offline: keep cached values */ }
     greeting();
@@ -69,9 +93,15 @@
     el.photoBtn.closest('.photo-row').hidden = !config.uploads;
   }
   let toastTimer;
-  function toast(msg, color = '#fff', ms = 1900) {
+  function toast(msg, color = '#fff', ms = 1900, action) {
     el.toast.innerHTML = '';
     el.toast.append(h('i', { style: `--c:${color}` }), msg);
+    el.toast.classList.toggle('has-action', !!action);
+    if (action) { // e.g. an Undo button right where the eye already is
+      const b = h('button', { type: 'button', class: 'toast-act', 'aria-label': action.aria || action.label }, action.label);
+      b.addEventListener('click', (e) => { e.stopPropagation(); el.toast.classList.remove('show'); action.run(); });
+      el.toast.append(b);
+    }
     el.toast.classList.toggle('long', ms > 2500);
     el.toast.classList.add('show');
     clearTimeout(toastTimer); toastTimer = setTimeout(() => el.toast.classList.remove('show'), ms);
@@ -82,9 +112,7 @@
   // One code path: the app always talks to /api/*. Normally that's the server; in the static demo (GitHub Pages,
   // window.MD_STATIC_DEMO, or ?demo=static) an in-browser mock answers instead. Nothing else changes.
   const STATIC_DEMO = window.MD_STATIC_DEMO === true || /\.github\.io$/i.test(location.hostname) || new URLSearchParams(location.search).get('demo') === 'static';
-  // window.MD_API_FETCH: a page can plug in its own /api/* implementation (the friends app answers from this browser's storage).
-  const LOCAL_API = typeof window.MD_API_FETCH === 'function';
-  const rawFetch = LOCAL_API ? window.MD_API_FETCH : STATIC_DEMO ? mockApi() : (path, opts) => fetch(path, opts);
+  const rawFetch = STATIC_DEMO ? mockApi() : (path, opts) => fetch(path, opts);
   let inflight = 0; // API calls in progress; an app update waits for these before reloading
   const apiFetch = (path, opts) => { inflight++; return Promise.resolve().then(() => rawFetch(path, opts)).finally(() => { inflight--; }); };
   function mockApi() {
@@ -208,7 +236,7 @@
     try {
       const data = await api('/api/deck');
       const queued = new Set([...outbox(), ...(await idb.all()).map((it) => it.payload)].map((p) => p.cardId));
-      state.deck = data.cards.filter((c) => !queued.has(c.id));
+      state.deck = foldDeck(data.cards.filter((c) => !queued.has(c.id)));
       state.loaded = true;
       if (!state.session.length && !state.deck.length) loadTodaySummary();
       render({ deal: initial });
@@ -216,6 +244,41 @@
       if (e.status === 401) return;
       state.loaded = true; setStatus('Offline · showing nothing new'); render();
     }
+  }
+  // Above-the-fold ordering (scripts/assemble.js sets card.rank + card.aboveFold). aboveFold cards first, in rank order,
+  // then a 'More (N)' divider card; the rest stay hidden in state.belowFold until the divider is tapped.
+  // No card with aboveFold set: the server's order, unchanged.
+  const DIVIDER_ID = 'md-more-divider';
+  function foldDeck(cards) {
+    state.belowFold = [];
+    if (state.foldOpen || !cards.some((c) => c.aboveFold === true)) return cards;
+    const byRank = (a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity);
+    const top = cards.filter((c) => c.aboveFold === true).sort(byRank);
+    const rest = cards.filter((c) => c.aboveFold !== true);
+    const restSorted = [...rest.filter((c) => !c.builtin).sort(byRank), ...rest.filter((c) => c.builtin)];
+    if (!restSorted.length) return top;
+    state.belowFold = restSorted;
+    return [...top, { id: DIVIDER_ID, divider: true, count: restSorted.length, title: `More (${restSorted.length})`, source: 'Morning Deck' }];
+  }
+  function openFold() {
+    const i = state.deck.findIndex((c) => c.divider);
+    if (i < 0) return;
+    state.foldOpen = true;
+    state.deck.splice(i, 1, ...(state.belowFold || []));
+    state.belowFold = [];
+    const n = el.stack.querySelector(`.card[data-id="${DIVIDER_ID}"]`); if (n) n.remove();
+    render({ deal: true });
+  }
+  function buildDivider(card) {
+    const node = h('article', { class: 'card card-divider', 'data-id': card.id, 'data-type': 'divider', role: 'button', tabindex: '0', 'aria-label': `More cards: ${card.count}. Tap to show them.` },
+      h('div', { class: 'divider-inner' },
+        h('div', { class: 'divider-emoji', 'aria-hidden': 'true' }, '🗂️'),
+        h('h2', {}, `More (${card.count})`),
+        h('p', { class: 'body' }, 'That’s the top 5. Tap to see the rest of today’s cards.'),
+        h('span', { class: 'chip' }, 'Tap to show')));
+    node.addEventListener('click', openFold);
+    node.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFold(); } });
+    return node;
   }
   async function loadTodaySummary() {
     try {
@@ -230,19 +293,25 @@
 
   // ---------- card DOM ----------
   function buildCard(card) {
+    if (card.divider) return buildDivider(card);
     const g = card.gestures;
     const accent = card.color || '#7c6cf2';
-    const node = h('article', { class: 'card', 'data-id': card.id, 'data-type': card.type, 'data-builtin': card.builtin ? '1' : null, style: `--accent:${accent}`, 'aria-label': `${card.source}: ${card.title}` });
+    const due = dueInfo(card);
+    const node = h('article', { class: 'card' + (due && due.cls === 'due-over' ? ' card-overdue' : due && due.cls === 'due-today' ? ' card-due-today' : ''), 'data-due': due ? due.cls : null, 'data-id': card.id, 'data-type': card.type, 'data-builtin': card.builtin ? '1' : null, style: `--accent:${accent}`, 'aria-label': `${card.source}: ${card.title}` });
     node.append(h('div', { class: 'card-wash' }), h('div', { class: 'card-ring' }));
     if (card.sample) node.append(h('div', { class: 'ribbon', title: 'Example data, not a real request' }, 'SAMPLE'));
     node.append(h('header', { class: 'card-head' },
       h('div', { class: 'avatar' }, card.emoji || '🤖'),
-      h('div', { class: 'who' }, h('div', { class: 'bot' }, card.source), h('div', { class: 'meta' }, card.builtin ? 'Your daily check-in · last card' : (card.meta || fmtTime(card.createdAt)) + (card.sample ? ' · sample' : '')))));
+      h('div', { class: 'who' }, h('div', { class: 'bot' }, card.source), h('div', { class: 'meta' }, card.builtin ? 'Your daily check-in · last card' : fmtTime(card.createdAt) + (card.sample ? ' · sample' : '')))));
     node.append(card.builtin
       ? h('div', { class: 'chips' }, h('span', { class: 'chip' }, 'Feedback'), h('span', { class: 'chip chip-soft' }, '1 minute'))
       : h('div', { class: 'chips' },
-        h('span', { class: 'chip' }, card.chip || TYPE_LABEL[card.type] || card.type),
-        h('span', { class: `chip prio-${card.priority}` }, card.priority === 'high' ? 'High priority' : card.priority === 'low' ? 'Low' : 'Normal')));
+        h('span', { class: 'chip' }, TYPE_LABEL[card.type] || card.type),
+        due && due.cls !== 'due-later' ? h('span', { class: `chip chip-${due.cls}`, 'aria-label': due.text }, due.cls === 'due-over' ? 'Overdue' : due.cls === 'due-today' ? 'Due today' : 'Due tomorrow') : null,
+        h('span', { class: `chip prio-${card.priority}` }, card.priority === 'high' ? 'High priority' : card.priority === 'low' ? 'Low' : 'Normal'),
+        ...((a) => (a ? [h('span', { class: `chip ${a.cls}` }, a.text)] : []))(ageChip(card)),
+        card.stale ? h('span', { class: 'chip chip-relevant', title: 'Pending 7+ days' }, 'Still relevant?') : null));
+    { const du = dueInfo(card); if (du) node.append(h('div', { class: `due-line ${du.cls}` }, h('span', { class: 'due-ico', 'aria-hidden': 'true' }, '⏰'), du.text)); }
     node.append(h('h2', {}, card.title));
     if (card.body) node.append(h('p', { class: 'body' }, card.body));
     if (card.type === 'choice') {
@@ -326,17 +395,22 @@
       const lbl = g ? g[d].label : { right: 'Yes', left: 'No', up: 'Later', down: 'Skip' }[d];
       if (sp.textContent !== lbl) sp.textContent = lbl; // write only on change: no relayout of the bar per swipe
       btn.disabled = !g || !!g[d].disabled;
+      const aria = g ? `${lbl}: ${state.deck[0].title}` : lbl; // screen readers hear what the button answers
+      if (btn.getAttribute('aria-label') !== aria) btn.setAttribute('aria-label', aria);
     }
     const t3 = document.querySelector('.act-tap3');
     const t3l = (g && g.tap3 && g.tap3.label) || 'Reply', t3s = t3.querySelector('span');
     t3.disabled = !g; if (t3s.textContent !== t3l) t3s.textContent = t3l;
     el.undo.disabled = !state.history.length;
     // counters
-    const n = state.deck.length;
+    const n = state.deck.filter((c) => !c.divider).length + ((state.belowFold && state.belowFold.length) || 0);
     if (el.count.textContent !== String(n)) {
       el.count.textContent = n;
+
       if (!reduced() && el.count.animate) el.count.animate([{ scale: 1 }, { scale: 1.35, offset: 0.4 }, { scale: 1 }], { duration: 450, easing: 'cubic-bezier(.2, 1.35, .35, 1)' }); // compositor bump, no forced reflow
     }
+    // App badge (installed PWA): pending count on the home-screen icon; cleared at 0.
+    if (state.loaded && state.badgeN !== n && 'setAppBadge' in navigator) { state.badgeN = n; try { (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); } catch (_) {} }
     const done = state.session.length;
     const frac = done + n ? done / (done + n) : (state.loaded ? 1 : 0);
     el.progress.style.transform = `translateX(${((frac - 1) * 100).toFixed(2)}%)`; // transform, not width: no layout per frame
@@ -350,10 +424,12 @@
 
   function renderCleared(celebrate) {
     el.cleared.hidden = false;
+    const heading = el.cleared.querySelector('h2');
+    if (heading) heading.textContent = reduced() ? 'All done' : 'All caught up';
     const list = state.session.length ? state.session.map((e) => ({ card: e.card, gesture: e.gesture, label: e.card.gestures[e.gesture].label, text: e.payload.text, pics: e.photos.length }))
       : (state.todayAnswers || []).map((a) => ({ card: { title: a.cardTitle, source: a.source, emoji: a.builtin ? '🌅' : '' }, gesture: a.gesture, label: a.label, text: a.text, pics: (a.attachments || []).length }));
     $('#clearedSub').textContent = list.length
-      ? `You cleared ${list.length} card${list.length > 1 ? 's' : ''}${state.session.length ? '' : ' today'}. ${config.clearedNote || (config.demo ? 'This is a demo, so nothing was saved. Reload for a fresh deck.' : 'Your bots will pick up your answers.')}`
+      ? `You cleared ${list.length} card${list.length > 1 ? 's' : ''}${state.session.length ? '' : ' today'}. ${config.demo ? 'This is a demo, so nothing was saved. Reload for a fresh deck.' : 'Your bots will pick up your answers.'}`
       : 'Nothing waiting on you right now. Enjoy your coffee ☕';
     const chips = $('#summaryChips'); chips.innerHTML = '';
     const snoozed = (x) => x.gesture === 'up' && (x.card.gestures ? x.card.gestures.up.snooze : x.label === 'Later');
@@ -371,12 +447,25 @@
     if (celebrate) confetti();
   }
 
+  // 401 from /api/*: full-screen "Sign in again" overlay (markup + CSS + form script come from GET /signin, the same
+  // page the server shows on a locked page load). The cached deck stays underneath; no spinner, no retry loop.
   function showLocked() {
+    if (state.locked) return;
     state.locked = true;
-    el.stack.innerHTML = '';
-    el.cleared.hidden = false;
-    el.cleared.innerHTML = '<div class="sunrise"><div class="sun"></div><div class="horizon"></div></div><h2>Locked</h2><p class="cleared-sub">Open Morning Deck with your private link (ending in <code>?token=…</code>) to sign this device in.</p>';
+    stopSpinner();
+    const fallback = '<!doctype html><style>.md-lock{position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;background:#1b1440;color:#fff;text-align:center;font-family:system-ui,sans-serif;padding:24px}</style><div class="md-lock"><div class="in"><h1>Sign in again</h1><p>Open your private sign-in link (the one ending in <code>?token=…</code>) on this device.</p></div></div>';
+    fetch('/signin', { cache: 'no-store', credentials: 'same-origin' }).then((r) => r.ok ? r.text() : fallback).catch(() => fallback).then((html) => {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const lock = doc.querySelector('.md-lock'); if (!lock || document.querySelector('.md-lock')) return;
+      doc.querySelectorAll('style').forEach((st) => document.head.append(st));
+      lock.classList.add('over');
+      document.body.append(lock);
+      document.documentElement.style.overflow = 'hidden';
+      doc.querySelectorAll('body script').forEach((sc) => { const n = document.createElement('script'); n.textContent = sc.textContent; document.body.append(n); });
+      const ta = lock.querySelector('textarea'); if (ta) ta.focus({ preventScroll: true });
+    });
   }
+  function stopSpinner() { try { document.querySelectorAll('.spinner,.loading').forEach((n) => n.remove()); } catch (_) {} }
 
   // ---------- drag physics ----------
   // Pointer Events feed ONE requestAnimationFrame writer: pointermove only records the latest point (no DOM reads or
@@ -483,7 +572,7 @@
 
   function onDown(e) {
     const node = e.currentTarget;
-    if (node.dataset.depth !== '0' || node.classList.contains('flying') || state.busy || state.sheetCard) return;
+    if (node.dataset.depth !== '0' || node.classList.contains('flying') || state.busy || state.sheetCard || panels.open()) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (topAnim) { topAnim.cancel(); topAnim = null; }
     try { node.setPointerCapture(e.pointerId); } catch (_) {}
@@ -584,8 +673,17 @@
     return (t) => { const e = Math.exp(-z * w0 * t), c = Math.cos(wd * t), s = Math.sin(wd * t); return [e * (x0 * c + B * s), e * ((B * wd - z * w0 * x0) * c - (x0 * wd + z * w0 * B) * s)]; };
   }
   function springBack(node, from, v) {
+    if (reduced()) {
+      // Short slide back to rest instead of the damped spring (tilt included).
+      node._pos = null;
+      node.classList.remove('dragging');
+      clearFeedback(node);
+      node.classList.add('rm-short');
+      requestAnimationFrame(() => { node.style.transform = ''; });
+      setTimeout(() => { node.classList.remove('rm-short'); if (!drag) live(false); }, 200);
+      return;
+    }
     node.classList.add('dragging');
-    if (reduced()) { node._pos = null; node.style.transform = ''; node.classList.remove('dragging'); clearFeedback(node); if (!drag) live(false); return; }
     resetFx(node);
     live(true);
     const sx = springAxis(from.x, v.x * 1000), sy = springAxis(from.y, v.y * 1000), sr = springAxis(from.rot, 0);
@@ -636,7 +734,18 @@
       for (const d of DIRS) { actBtn[d].style.transform = ''; actBtn[d]._t = ''; }
       if (!topAnim) live(false);
     };
-    if (reduced()) { commit(card, dir, opts.text, opts.photos); node.style.transition = 'opacity .15s'; node.style.opacity = 0; setTimeout(finish, 160); return; }
+    if (reduced()) {
+      commit(card, dir, opts.text, opts.photos);
+      node.classList.remove('dragging');
+      node.classList.add('rm-short');
+      const nudge = 28;
+      const dx = dir === 'right' ? nudge : dir === 'left' ? -nudge : 0;
+      const dy = dir === 'down' ? nudge : dir === 'up' ? -nudge : 0;
+      const x = from.x + dx, y = from.y + dy;
+      requestAnimationFrame(() => { node.style.opacity = '0'; node.style.transform = `translate3d(${r3(x)}px, ${r3(y)}px, 0)`; });
+      setTimeout(finish, 200);
+      return;
+    }
     // Same physics as before, pre-computed into keyframes at 120 Hz and handed to the compositor.
     const kf = [{ transform: `translate3d(${r3(x)}px, ${r3(y)}px, 0) rotate(${r3(r)}deg)` }];
     const dt = 1 / 120; let t = 0;
@@ -656,6 +765,7 @@
   function swipe(dir, opts = {}) {
     const node = el.stack.querySelector('.card[data-depth="0"]:not(.flying)');
     const card = node && topCardData(node);
+    if (card && card.divider) return; // the More divider is tapped, not swiped
     if (!card || (card.gestures[dir] || {}).disabled || state.busy) return;
     if (card.gestures[dir].reply && !opts.fromSheet) return openSheet(card, { gesture: dir });
     flash(dir);
@@ -714,24 +824,24 @@
   // ---------- sheet ----------
   // mode = which gesture Save records: 'tap3' (custom reply) or a direction flagged `reply` (e.g. "Something's off").
   function openSheet(card, { gesture = 'tap3', text = '', photos = [] } = {}) {
+    if (card && card.divider) return openFold();
     if (!card) return;
     state.sheetCard = card; state.sheetOpenedAt = performance.now();
     const bot = $('#sheetBot'); bot.innerHTML = '';
     bot.append(h('div', { class: 'avatar', style: `--accent:${card.color || '#7c6cf2'}` }, card.emoji || '🤖'),
       h('div', {}, card.source, h('small', {}, card.builtin ? 'Built into Morning Deck' : fmtTime(card.createdAt) + (card.sample ? ' · SAMPLE data' : ''))));
+    { const meta = $('#sheetMeta'); meta.innerHTML = ''; const du = dueInfo(card);
+      if (du) meta.append(h('div', { class: `due-line sheet-due ${du.cls}` }, h('span', { class: 'due-ico', 'aria-hidden': 'true' }, '⏰'), du.text));
+      if (card.stale) meta.append(h('span', { class: 'chip chip-relevant' }, 'Still relevant? Pending 7+ days')); }
     $('#sheetTitle').textContent = card.title;
     $('#sheetBody').textContent = card.body || '';
     $('#sheetDetails').textContent = card.details || '';
-    // optional card.link (http/https only): an "Open" button in the sheet
-    let link = $('#sheetLink');
-    if (!link) { link = h('a', { id: 'sheetLink', class: 'sheet-link', target: '_blank', rel: 'noopener noreferrer' }); $('#sheetDetails').after(link); }
-    const safeLink = typeof card.link === 'string' && /^https?:\/\//i.test(card.link) ? card.link : '';
-    link.hidden = !safeLink; link.href = safeLink || '#'; link.textContent = card.linkLabel || 'Open ↗';
     el.sheetScroll.scrollTop = 0;
     el.reply.value = text;
     clearPhotos();
     for (const p of photos) addPhotoEntry(p);
     setSheetMode(gesture);
+    renderVoice(card);
     if (dragReset.sheet) dragReset.sheet();
     el.sheetWrap.classList.remove('closing', 'kb'); el.sheetWrap.hidden = false;
     syncViewport();
@@ -752,13 +862,79 @@
       });
       quick.append(b);
     }
-    $('#replyLabel').textContent = g.prompt || (state.sheetGesture === 'tap3' ? 'Your reply' : `${g.label}: add a note`);
-    el.reply.placeholder = state.sheetGesture === 'tap3' ? (card.builtin ? 'Ideas, bugs, wishes… or just add a photo' : 'Type your answer…') : 'Optional: what happened?';
+    // Triple-tap / Reply on a bot card: make it obvious this is also how to ask the bot a question back.
+    const askBot = state.sheetGesture === 'tap3' && !card.builtin;
+    const botPrompt = card.rawGestures && card.rawGestures.tap3 && card.rawGestures.tap3.prompt;
+    $('#replyLabel').textContent = askBot ? (botPrompt || `Reply or ask ${card.source || 'the bot'} a question`) : g.prompt || (askBot ? `Reply or ask ${card.source || 'the bot'} a question` : state.sheetGesture === 'tap3' ? 'Your reply' : `${g.label}: add a note`);
+    el.reply.placeholder = state.sheetGesture === 'tap3' ? (card.builtin ? 'Ideas, bugs, wishes… or just add a photo' : 'Type your answer, or ask for more info…') : 'Optional: what happened?';
+    $('#sheetNote').textContent = askBot ? `Saving records your reply for ${card.source || 'the bot'} to pick up. Nothing is sent from here.` : 'Saving records your reply. Nothing is sent from here.';
     el.sheetWrap.dataset.mode = state.sheetGesture;
     el.sheetWrap.style.setProperty('--mode-c', COLORS[state.sheetGesture]);
     updateSave();
   }
+  // ---------- voice (2026-10-22): read aloud (speechSynthesis) + answer by voice (Web Speech API) ----------
+  // Voice never records by itself: what was heard is shown with the mapped decision and only "Record" swipes.
+  const VOICE_MAP = { right: ['yes', 'yeah', 'yep', 'approve', 'ok', 'okay', 'sure'], left: ['no', 'nope', 'deny', 'reject'],
+    up: ['later', 'snooze', 'not now', 'tomorrow'], down: ['skip', 'pass', 'next'] };
+  function voiceDir(text) {
+    const t = ` ${String(text || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ')} `;
+    for (const d of DIRS) if (VOICE_MAP[d].some((w) => t.includes(` ${w} `))) return d;
+    return null;
+  }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function stopVoice() { try { window.speechSynthesis && speechSynthesis.cancel(); } catch (_) {} if (state.rec) { try { state.rec.abort(); } catch (_) {} state.rec = null; } }
+  function renderVoice(card, msg) {
+    const box = $('#sheetVoice'); if (!box) return; box.innerHTML = '';
+    if (!card || card.divider) return;
+    const row = h('div', { class: 'voice-row' });
+    if ('speechSynthesis' in window) {
+      const rb = h('button', { type: 'button', class: 'vbtn', id: 'readAloudBtn', 'aria-label': 'Read this card aloud' }, '🔊 Read aloud');
+      rb.addEventListener('click', () => {
+        if (speechSynthesis.speaking) { speechSynthesis.cancel(); return; }
+        const u = new SpeechSynthesisUtterance([card.source, card.title, card.body, card.details].filter(Boolean).join('. '));
+        u.lang = 'en-US'; speechSynthesis.speak(u);
+      });
+      row.append(rb);
+    }
+    if (SR) {
+      const mb = h('button', { type: 'button', class: 'vbtn', id: 'voiceAnswerBtn', 'aria-label': 'Answer by voice' }, '🎙 Answer by voice');
+      mb.addEventListener('click', () => listen(card));
+      row.append(mb);
+    } else row.append(h('span', { class: 'voice-hint' }, 'Voice answers need a browser with speech recognition.'));
+    box.append(row);
+    const labels = DIRS.filter((d) => card.gestures[d] && !card.gestures[d].disabled).map((d) => `“${VOICE_MAP[d][0]}” = ${card.gestures[d].label}`);
+    box.append(h('p', { class: 'voice-hint' }, msg || `Say ${labels.join(' · ')}`));
+  }
+  function confirmVoice(card, heard, dir) {
+    const box = $('#sheetVoice'); box.innerHTML = '';
+    const g = dir && card.gestures[dir];
+    if (!g || g.disabled) { renderVoice(card, `Heard “${heard || '…'}”. Try yes, no, later or skip.`); return; }
+    const ok = h('button', { type: 'button', class: 'primary-btn', id: 'voiceConfirm' }, `Record “${g.label}”`);
+    const no = h('button', { type: 'button', class: 'ghost-btn', id: 'voiceCancel' }, 'Cancel');
+    ok.addEventListener('click', () => { closeSheet(); setTimeout(() => swipe(dir), 260); });
+    no.addEventListener('click', () => renderVoice(card));
+    box.append(h('div', { class: 'voice-confirm', role: 'alertdialog', 'aria-label': 'Confirm voice answer' },
+      h('p', {}, 'Heard “', h('b', {}, heard), '” → ', h('b', { style: `color:${COLORS[dir]}` }, `${{ right: '→', left: '←', up: '↑', down: '↓' }[dir]} ${g.label}`)),
+      h('p', { class: 'voice-hint' }, 'Nothing is recorded until you tap Record.'), h('div', { class: 'voice-actions' }, no, ok)));
+  }
+  function listen(card) {
+    stopVoice();
+    const rec = new SR(); state.rec = rec;
+    rec.lang = 'en-US'; rec.interimResults = false; rec.maxAlternatives = 3;
+    renderVoice(card, 'Listening… say yes, no, later or skip.');
+    rec.onresult = (e) => {
+      const alts = Array.from(e.results[0] || []).map((a) => a.transcript);
+      const hit = alts.find((a) => voiceDir(a)) || alts[0] || '';
+      state.rec = null; confirmVoice(card, hit.trim(), voiceDir(hit));
+    };
+    rec.onerror = (e) => { state.rec = null; renderVoice(card, e.error === 'not-allowed' ? 'Microphone permission was denied.' : 'Didn’t catch that. Try again.'); };
+    rec.onend = () => { if (state.rec === rec) { state.rec = null; renderVoice(card, 'Didn’t catch that. Try again.'); } };
+    try { rec.start(); } catch (_) { renderVoice(card, 'Voice input could not start.'); }
+  }
+  window.__mdVoice = { voiceDir, confirmVoice: (heard) => state.sheetCard && confirmVoice(state.sheetCard, heard, voiceDir(heard)) };
+
   function closeSheet() {
+    stopVoice();
     if (!state.sheetCard) return;
     state.sheetCard = null;
     el.reply.blur();
@@ -797,7 +973,12 @@
     const ring = node.querySelector('.card-ring'); ring.style.setProperty('--glow', rgba(COLORS.tap3, 0.9)); ring.style.opacity = 1;
     node.style.boxShadow = `0 0 60px ${rgba(COLORS.tap3, 0.6)}`;
     commit(card, 'tap3', text, photos);
-    if (reduced()) { node.remove(); return; }
+    if (reduced()) {
+      node.classList.add('rm-short');
+      requestAnimationFrame(() => { node.style.opacity = '0'; node.style.transform = 'translate3d(0,-24px,0)'; });
+      setTimeout(() => node.remove(), 200);
+      return;
+    }
     node.style.transition = 'transform .55s cubic-bezier(.5,-0.4,.7,.4), opacity .5s ease-in';
     setTimeout(() => { node.style.transform = 'translate3d(0,-120%,0) scale(.7) rotate(-6deg)'; node.style.opacity = 0; }, 260);
     setTimeout(() => node.remove(), 900);
@@ -923,10 +1104,10 @@
     if (text) payload.text = text;
     const entry = { card, gesture, payload, photos, answerId: null, queued: false };
     state.history.push(entry); state.session.push(entry);
-    buzz(12);
     const pics = photos.length ? ` · ${photos.length} photo${photos.length > 1 ? 's' : ''}` : '';
     const label = gesture === 'tap3' ? (card.builtin ? 'Thanks! Suggestion saved' : 'Reply saved') : card.builtin && gesture === 'right' ? 'Love it · thanks!' : g.label;
-    toast(`${label}${card.builtin ? '' : ` · ${card.source}`}${pics}${gesture === 'up' && g.snooze !== false ? (config.snoozeNote != null ? config.snoozeNote : ' · back tomorrow 6 AM') : ''}`, COLORS[gesture]);
+    toast(`${label}${card.builtin ? '' : ` · ${card.source}`}${pics}${gesture === 'up' ? ' · back tomorrow 6 AM' : ''}`, COLORS[gesture], 4000, { label: 'Undo', aria: `Undo answer to ${card.title}`, run: () => { if (state.history[state.history.length - 1] === entry) undo(); } });
+    buzz(gesture === 'right' ? [10, 40, 18] : gesture === 'left' ? 22 : 12); // distinct feel per answer
     // Optimistic: the card is already gone on screen; the network catches up. If this card's undo is still syncing,
     // wait for it so the server sees undo -> new answer in order.
     const send = () => (photos.length ? sendAnswer(payload, photos) : api('/api/answers', { method: 'POST', body: JSON.stringify(payload) }));
@@ -1012,7 +1193,11 @@
   // Light: ~130 pieces, canvas capped at 1.5x pixels, one setTransform per piece (no save/restore), batched by colour.
   let confettiRun = null;
   function confetti() {
-    if (reduced()) return;
+    if (reduced()) {
+      const cv = $('#confetti');
+      if (cv) { cv.hidden = true; cv.width = 0; cv.height = 0; }
+      return;
+    }
     if (confettiRun) confettiRun.stop();
     const cv = $('#confetti'); const ctx = cv.getContext('2d');
     const dpr = Math.min(1.5, window.devicePixelRatio || 1);
@@ -1059,6 +1244,7 @@
   // ---------- wiring ----------
   document.querySelectorAll('.act[data-g]').forEach((b) => b.addEventListener('click', () => {
     const g = b.dataset.g;
+    if (state.deck[0] && state.deck[0].divider) return openFold();
     if (g === 'tap3') return openSheet(state.deck[0]);
     swipe(g);
   }));
@@ -1074,14 +1260,18 @@
   el.reply.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveReply(); });
   document.addEventListener('keydown', (e) => {
     if (state.sheetCard) { if (e.key === 'Escape') closeSheet(); return; }
-    if (document.documentElement.hasAttribute('data-overlay')) return; // a page overlay (e.g. friends settings) has the keyboard
-    if (e.target.closest && e.target.closest('textarea,input,select')) return;
+    if (panels.open()) { if (e.key === 'Escape') panels.closeTop(); return; }
+    if (e.target.closest && e.target.closest('textarea,input')) return;
     const map = { ArrowRight: 'right', ArrowLeft: 'left', ArrowUp: 'up', ArrowDown: 'down' };
     if (map[e.key]) { e.preventDefault(); swipe(map[e.key]); }
     else if (e.key === 'Enter' || e.key === 'r') { e.preventDefault(); openSheet(state.deck[0]); }
     else if (e.key === 'u' || e.key === 'Backspace' || ((e.ctrlKey || e.metaKey) && e.key === 'z')) { e.preventDefault(); undo(); }
   });
-  window.addEventListener('online', flushOutbox);
+  // The phone link drops often: say so at once, and that swipes still count (they wait on this phone).
+  const OFFLINE_MSG = 'Offline · keep swiping, answers wait on this phone and sync when you reconnect';
+  window.addEventListener('offline', () => { if (!el.status.textContent || el.status.textContent.startsWith('Offline')) setStatus(OFFLINE_MSG); });
+  window.addEventListener('online', () => { if (el.status.textContent === OFFLINE_MSG) setStatus(''); flushOutbox(); });
+  if (navigator.onLine === false) setStatus(OFFLINE_MSG);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || state.locked) return;
     flushOutbox();
@@ -1095,9 +1285,10 @@
   const isStandalone = () => displayMode() !== 'browser' || navigator.standalone === true;
   const install = { deferred: null, bipFired: false, installed: false };
   function diag(event, extra = {}) {
-    if (STATIC_DEMO || LOCAL_API) return; // no backend on the static demo or the friends app
+    if (STATIC_DEMO) return; // no backend on the static demo
     const body = { ua: navigator.userAgent, displayMode: displayMode(), bipFired: install.bipFired, swControlled: !!(navigator.serviceWorker && navigator.serviceWorker.controller),
-      standalone: isStandalone(), installed: install.installed, ts: new Date().toISOString(), event, path: location.pathname, ...extra };
+      standalone: isStandalone(), installed: install.installed, bipSupported: 'BeforeInstallPromptEvent' in window, secs: Math.round(performance.now() / 1000),
+      ts: new Date().toISOString(), event, path: location.pathname, ...extra };
     fetch('/api/diag', { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
   }
   const installBtn = $('#installBtn'), installWrap = $('#installWrap');
@@ -1205,11 +1396,324 @@
     if (!install.bipFired && !isStandalone() && !state.locked) showInstall('help');
     install.loadSent = true; if (!state.locked) diag('load');
   }, 4000);
+  // Chrome may only fire beforeinstallprompt after ~30s of engagement: report again at 45s if the page is still open
+  setTimeout(() => { if (!state.locked && !document.hidden && !install.bipFired && !isStandalone()) diag('t45'); }, 45000);
+
+
+  // ---------- settings: theme, Notify me, History ----------
+  const THEME_KEY = 'md_theme';
+  function applyTheme(t) {
+    const light = t === 'light';
+    if (light) document.documentElement.dataset.theme = 'light'; else delete document.documentElement.dataset.theme;
+    const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = light ? '#f6e9f2' : '#1d1442';
+    document.querySelectorAll('[data-theme-opt]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.themeOpt === (light ? 'light' : 'dark'))));
+  }
+  const currentTheme = () => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+  document.querySelectorAll('[data-theme-opt]').forEach((b) => b.addEventListener('click', () => {
+    const t = b.dataset.themeOpt; try { localStorage.setItem(THEME_KEY, t); } catch (_) {} applyTheme(t);
+  }));
+  applyTheme(currentTheme());
+
+  const panels = {
+    settings: $('#settingsWrap'), history: $('#historyWrap'), insights: $('#insightsWrap'), recap: $('#recapWrap'),
+    open() { return !this.settings.hidden || !this.history.hidden || !this.insights.hidden || !this.recap.hidden; },
+    show(name) { this[name].hidden = false; const x = this[name].querySelector('.panel-x'); if (x) x.focus({ preventScroll: true }); },
+    close(name) { this[name].hidden = true; },
+    closeTop() { if (!this.recap.hidden) this.close('recap'); else if (!this.insights.hidden) this.close('insights'); else if (!this.history.hidden) this.close('history'); else this.close('settings'); },
+  };
+  document.querySelectorAll('[data-close]').forEach((n) => n.addEventListener('click', () => panels.close(n.dataset.close)));
+  $('#settingsBtn').addEventListener('click', () => { panels.show('settings'); refreshNotify(); });
+  $('#historyBtn').addEventListener('click', () => { panels.show('history'); loadHistory(); });
+  $('#insightsBtn').addEventListener('click', () => { panels.show('insights'); loadInsights(); });
+  $('#insightsRowBtn').addEventListener('click', () => { panels.show('insights'); loadInsights(); });
+  const openRecap = () => { panels.show('recap'); loadRecap(); };
+  $('#recapRowBtn').addEventListener('click', openRecap);
+  $('#tileRecap').addEventListener('click', openRecap);
+  if (new URLSearchParams(location.search).get('view') === 'recap') setTimeout(openRecap, 0); // manifest shortcut
+
+  // ---------- Insights: GET /api/insights (read-only). Hand-built SVG, no chart library. ----------
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const sv = (tag, attrs = {}, ...kids) => { const n = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, v); for (const k of kids) if (k != null) n.append(k.nodeType ? k : document.createTextNode(String(k))); return n; };
+  const SERIES = [['answered', COLORS.right, 'Answered'], ['skipped', COLORS.down, 'Skipped'], ['snoozed', COLORS.up, 'Snoozed'], ['new', COLORS.tap3, 'New']];
+  const shortDay = (d) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'numeric', day: 'numeric' });
+  function dueText(r, now = Date.now()) {
+    if (!r.expiresAt) return 'No due date';
+    const ms = Date.parse(r.expiresAt) - now, d = new Date(r.expiresAt);
+    const when = d.toLocaleDateString('en-US', { timeZone: TZ, month: 'short', day: 'numeric' }) + ', ' + d.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }) + ' ET';
+    if (ms <= 0) { const hrs = Math.round(-ms / 3600e3); return `Overdue ${hrs < 24 ? hrs + 'h' : Math.round(hrs / 24) + 'd'} · ${when}`; }
+    if (ms < 48 * 3600e3) return `Due in ${Math.max(1, Math.round(ms / 3600e3))}h · ${when}`;
+    return `Due ${when}`;
+  }
+  function dayChart(series) {
+    const W = 340, H = 132, pad = 18, bw = (W - 8) / series.length, max = Math.max(1, ...series.map((d) => d.answered + d.skipped + d.snoozed + d.new));
+    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'ins-chart', role: 'img', 'aria-label': 'Cards per day, last 14 days' });
+    const defs = sv('defs', {}, sv('pattern', { id: 'insHatch', width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, sv('line', { x1: 0, y1: 0, x2: 0, y2: 6, class: 'ins-hatch' })));
+    svg.append(defs, sv('line', { x1: 0, x2: W, y1: H - pad, y2: H - pad, class: 'ins-axis' }));
+    series.forEach((d, i) => {
+      const x = 4 + i * bw + 2, w = bw - 4;
+      if (!d.covered) { svg.append(sv('rect', { x, y: 8, width: w, height: H - pad - 8, rx: 3, fill: 'url(#insHatch)', class: 'ins-nodata' }, sv('title', {}, `${d.date}: no records`))); }
+      else {
+        let y = H - pad;
+        for (const [k, c] of SERIES) { const v = d[k]; if (!v) continue; const hgt = (v / max) * (H - pad - 14); y -= hgt; svg.append(sv('rect', { x, y, width: w, height: Math.max(1.5, hgt), rx: 2, fill: c }, sv('title', {}, `${d.date}: ${v} ${k}`))); }
+        if (y === H - pad) svg.append(sv('rect', { x, y: H - pad - 2, width: w, height: 2, rx: 1, class: 'ins-zero' }));
+      }
+      if (i % 2 === series.length % 2 || i === series.length - 1) svg.append(sv('text', { x: x + w / 2, y: H - 4, 'text-anchor': 'middle', class: 'ins-tick' }, i === series.length - 1 ? 'Today' : shortDay(d.date)));
+    });
+    return svg;
+  }
+  function strip(cells) {
+    const shown = cells.slice(-14), n = shown.length;
+    const svg = sv('svg', { viewBox: `0 0 ${n * 7} 8`, class: 'ins-strip', 'aria-hidden': 'true', preserveAspectRatio: 'none' });
+    shown.forEach((c, i) => svg.append(sv('rect', { x: i * 7, y: 0, width: 6, height: 8, rx: 1.5, class: c == null ? 's-na' : c === 2 ? 's-hot' : c === 1 ? 's-on' : 's-off' })));
+    return svg;
+  }
+  function jumpToCard(id) {
+    const i = state.deck.findIndex((c) => c.id === id);
+    if (i < 0) return false;
+    const [c] = state.deck.splice(i, 1); state.deck.unshift(c);
+    panels.close('insights'); panels.close('settings'); render(); toast(`Jumped to: ${c.title.slice(0, 40)}`, '#fff', 1600);
+    return true;
+  }
+  function insRow(r, maxScore) {
+    const li = h('li', { class: `ins-row${r.overdue ? ' is-overdue' : r.dueSoon ? ' is-soon' : ''}`, 'data-card': r.id, tabindex: '0', role: 'button', 'aria-expanded': 'false' },
+      h('div', { class: 'ins-row-top' },
+        h('span', { class: 'ins-emoji', style: `--accent:${r.color || '#7c6cf2'}` }, r.emoji || '🤖'),
+        h('div', { class: 'ins-row-main' },
+          h('div', { class: 'ins-row-title' }, r.title),
+          h('div', { class: 'ins-row-meta' }, h('span', { class: 'ins-src' }, r.source || 'Unknown bot'), h('span', { class: 'ins-due' + (r.overdue ? ' over' : r.dueSoon ? ' soon' : '') }, dueText(r)))),
+        h('div', { class: 'ins-row-nums' }, h('b', {}, `${r.daysPending}d`), h('small', {}, `${r.skips}× skip · ${r.snoozes}× later`))),
+      h('div', { class: 'ins-row-bars' },
+        h('div', { class: 'ins-bar' }, h('i', { style: `width:${Math.max(4, Math.round((r.score / maxScore) * 100))}%` })),
+        strip(r.strip)),
+      h('div', { class: 'ins-detail', hidden: true },
+        h('p', { class: 'ins-state' }, r.status === 'pending' ? 'In today\u2019s deck' : r.status === 'snoozed' ? `Snoozed until ${etStamp(r.snoozedUntil)}` : 'Expired without an answer (no longer in the deck)'),
+        r.body ? h('p', {}, r.body) : null, r.details ? h('p', { class: 'ins-details' }, r.details) : null));
+    const act = () => {
+      if (r.inDeck && jumpToCard(r.id)) return;
+      const d = li.querySelector('.ins-detail'); d.hidden = !d.hidden; li.setAttribute('aria-expanded', String(!d.hidden));
+    };
+    li.addEventListener('click', act);
+    li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(); } });
+    return li;
+  }
+  function section(title, sub, ...kids) { return h('section', { class: 'ins-sec' }, h('div', { class: 'ins-sec-head' }, h('h4', {}, title), sub ? h('small', {}, sub) : null), ...kids); }
+  // ---------- weekly recap (computed by GET /api/recap; read-only) ----------
+  async function loadRecap() {
+    const body = $('#recapBody');
+    let d;
+    try { d = await api('/api/recap'); } catch (e) { body.innerHTML = ''; body.append(h('p', { class: 'panel-sub' }, e.status === 401 ? 'Signed out.' : 'Could not load the recap (offline?)')); return; }
+    const frag = document.createDocumentFragment();
+    const since = new Date(d.weekStart).toLocaleDateString('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' });
+    const tile = (n, l, cls = '') => h('div', { class: 'ins-tile ' + cls }, h('b', {}, n), h('small', {}, l));
+    frag.append(h('p', { class: 'ins-note' }, `Since ${since}${d.demo ? ' · Demo: SAMPLE data, nothing is kept' : ''}`));
+    frag.append(h('div', { class: 'ins-tiles' }, tile(d.counts.decisions, 'Decisions', d.counts.decisions ? 'ok' : ''), tile(d.counts.skips, 'Skips'), tile(d.counts.snoozes, 'Snoozes'), tile(d.counts.open, 'Still open', d.counts.open ? 'warn' : 'ok')));
+    const when = (t) => new Date(t).toLocaleDateString('en-US', { timeZone: TZ, weekday: 'short' }) + ' ' + new Date(t).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' });
+    const list = (items, row, empty) => items.length ? h('ul', { class: 'recap-list' }, ...items.map(row)) : h('p', { class: 'panel-sub' }, empty);
+    frag.append(section('Decisions made', `${d.decisions.length} this week`, list(d.decisions.slice(0, 20), (a) => h('li', { class: 'recap-row' },
+      h('b', {}, a.title || a.cardId), h('small', {}, `${a.label || a.gesture}${a.text ? ` · “${a.text}”` : ''} · ${a.source || ''} · ${when(a.at)}`)), 'No decisions recorded yet this week.')));
+    frag.append(section('Longest skipped', 'Open cards that keep slipping', list(d.longestSkipped, (r) => h('li', { class: 'recap-row' },
+      h('b', {}, `${r.emoji || ''} ${r.title}`.trim()), h('small', {}, `${r.skips} skip${r.skips === 1 ? '' : 's'} · ${r.snoozes} snooze${r.snoozes === 1 ? '' : 's'} · pending ${r.daysPending}d · ${r.source || ''}`)), 'Nothing is being skipped.')));
+    frag.append(section('Waiting on you the most', 'Open cards per bot, summed days pending', list(d.waitingOn, (b, i) => h('li', { class: 'recap-row' + (i === 0 ? ' recap-top' : '') },
+      h('b', {}, `${b.emoji || '🤖'} ${b.source}`), h('small', {}, `${b.open} open · ${b.waitingDays} day${b.waitingDays === 1 ? '' : 's'} waiting · oldest ${b.oldestDays}d`)), 'No bot is waiting on you.')));
+    body.innerHTML = ''; body.append(frag);
+  }
+  async function loadInsights() {
+    const body = $('#insightsBody');
+    let data;
+    try { data = await api('/api/insights'); } catch (e) { body.innerHTML = ''; body.append(h('p', { class: 'panel-sub' }, e.status === 401 ? 'Signed out.' : 'Could not load insights (offline?)')); return; }
+    state.insights = data;
+    const s = data.summary, frag = document.createDocumentFragment();
+    const tile = (n, l, cls = '') => h('div', { class: 'ins-tile ' + cls }, h('b', {}, n), h('small', {}, l));
+    frag.append(h('div', { class: 'ins-tiles' },
+      tile(s.pending, 'Pending', s.pending ? '' : 'ok'),
+      tile(s.oldestPendingDays == null ? '–' : `${s.oldestPendingDays}d`, 'Oldest pending'),
+      tile(s.clearedStreak, s.clearedStreak === 1 ? 'Day cleared' : 'Days cleared', s.clearedStreak ? 'ok' : ''),
+      tile(s.overdue + s.dueSoon, 'Overdue / due soon', s.overdue ? 'warn' : '')));
+    if (data.demo) frag.append(h('p', { class: 'ins-note' }, 'Demo: SAMPLE cards only, no history is kept.'));
+
+    const att = data.attention.slice(0, 12), maxScore = Math.max(1, ...att.map((r) => r.score));
+    const anyTouched = data.attention.some((r) => r.skips || r.snoozes);
+    frag.append(section('Needs attention', anyTouched ? 'Ranked by skips/snoozes and days pending' : 'No skips or snoozes recorded yet · ranked by days pending and due date',
+      att.length ? h('ol', { class: 'ins-list' }, att.map((r) => insRow(r, maxScore))) : h('p', { class: 'ins-empty' }, 'Nothing waiting. Deck is clear.'),
+      att.length ? h('p', { class: 'ins-legend' }, h('i', { class: 's-on' }), 'pending that day', h('i', { class: 's-hot' }), 'skipped/snoozed', h('i', { class: 's-na' }), 'no record') : null));
+
+    const hasActivity = data.series.some((d) => d.covered && (d.answered || d.skipped || d.snoozed || d.new));
+    const firstDay = data.history.start ? shortDay(data.history.start) : null;
+    frag.append(section('Last 14 days', firstDay ? `Records start ${firstDay}${data.history.start >= '2026-10-17' ? ' (older history was lost Oct 17)' : ''}` : 'No records yet',
+      hasActivity ? dayChart(data.series) : h('p', { class: 'ins-empty' }, 'No activity recorded in the last 14 days.'),
+      hasActivity ? h('div', { class: 'ins-keys' }, SERIES.map(([, c, l]) => h('span', { style: `--c:${c}` }, l)), h('span', { class: 'k-na' }, 'No data')) : null,
+      data.history.answerRecords ? null : h('p', { class: 'ins-note' }, 'No answers on record yet, so skip and snooze counts start at zero.')));
+
+    const maxBot = Math.max(1, ...data.byBot.map((b) => b.open));
+    frag.append(section('Open cards per bot', `${s.open} open`,
+      data.byBot.length ? h('ul', { class: 'ins-bots' }, data.byBot.map((b) => h('li', {},
+        h('span', { class: 'ins-bot-name' }, `${b.emoji || ''} ${b.source}`.trim()),
+        h('span', { class: 'ins-bot-bar' }, h('i', { style: `width:${Math.round((b.open / maxBot) * 100)}%;--c:${b.color || '#8b7cf6'}` })),
+        h('b', {}, b.open)))) : h('p', { class: 'ins-empty' }, 'No open cards.')));
+
+    const byId = new Map(data.attention.map((r) => [r.id, r]));
+    const due = data.dueSoon.map((id) => byId.get(id)).filter(Boolean);
+    frag.append(section('Due soon or overdue', 'Next 48 hours, and expired without an answer',
+      due.length ? h('ol', { class: 'ins-list' }, due.map((r) => insRow(r, maxScore))) : h('p', { class: 'ins-empty' }, 'Nothing due in the next 48 hours.')));
+    frag.append(h('p', { class: 'ins-note' }, `Updated ${etStamp(data.generatedAt)}. Read-only: nothing here changes a card.`));
+    body.innerHTML = ''; body.append(frag); body.scrollTop = 0;
+  }
+
+  // History: GET /api/answers?all=1 (includes undone answers; undo log entries are folded into "Undone").
+  function etStamp(iso) {
+    const d = new Date(iso);
+    return `${d.toLocaleDateString('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' })}, ${d.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' })} ET`;
+  }
+  async function loadHistory() {
+    const list = $('#historyList'), sub = $('#historySub');
+    sub.textContent = 'Loading…';
+    let data;
+    try { data = await api('/api/answers?all=1'); } catch (e) { list.innerHTML = ''; sub.textContent = e.status === 401 ? 'Signed out.' : 'Could not load history (offline?)'; return; }
+    const rows = (data.answers || []).filter((a) => a.gesture !== 'undo')
+      .sort((a, b) => Date.parse(b.answeredAt || b.recordedAt) - Date.parse(a.answeredAt || a.recordedAt));
+    list.innerHTML = '';
+    sub.textContent = rows.length ? `${rows.length} answer${rows.length === 1 ? '' : 's'} · newest first` : 'No answers yet. Swipe a card and it shows up here.';
+    for (const a of rows) {
+      const c = COLORS[a.gesture] || '#8a84a3';
+      const choice = a.gesture === 'tap3' ? (a.label || 'Reply') : (a.label || a.value || a.gesture);
+      list.append(h('li', { class: 'hist-row' + (a.undone ? ' undone' : ''), 'data-answer': a.id },
+        h('div', { class: 'hist-top' },
+          h('span', { class: 'hist-src' }, a.source || 'Unknown bot'),
+          h('time', { datetime: a.answeredAt || a.recordedAt }, etStamp(a.answeredAt || a.recordedAt))),
+        h('div', { class: 'hist-title' }, a.cardTitle || a.cardId),
+        h('div', { class: 'hist-meta' },
+          h('span', { class: 'hist-choice', style: `--c:${c}` }, choice),
+          a.undone ? h('span', { class: 'hist-undone' }, 'Undone') : null,
+          a.sample ? h('span', { class: 'hist-sample' }, 'Sample') : null,
+          a.attachments && a.attachments.length ? h('span', { class: 'hist-photos' }, `${a.attachments.length} photo${a.attachments.length > 1 ? 's' : ''}`) : null),
+        a.text ? h('p', { class: 'hist-text' }, a.text) : null));
+    }
+  }
+
+  // Notify me: subscribe this device to Web Push (server keeps subscriptions in data/push.json).
+  const notifyToggle = $('#notifyToggle'), notifyHint = $('#notifyHint');
+  const pushSupported = () => !STATIC_DEMO && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  function b64uToBytes(s) { const p = '='.repeat((4 - (s.length % 4)) % 4); const b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, (ch) => ch.charCodeAt(0)); }
+  async function currentSub() { try { const reg = await navigator.serviceWorker.getRegistration(); return reg ? await reg.pushManager.getSubscription() : null; } catch (_) { return null; } }
+  async function refreshNotify() {
+    if (!pushSupported() || config.demo) { notifyToggle.checked = false; notifyToggle.disabled = true; notifyHint.textContent = config.demo ? 'Not available in the demo' : 'This browser can\u2019t do notifications'; return; }
+    let key = {}; try { key = await api('/api/push/key'); } catch (_) {}
+    if (!key.enabled) { notifyToggle.disabled = true; notifyToggle.checked = false; notifyHint.textContent = 'Notifications aren\u2019t set up on the server yet'; return; }
+    notifyToggle.disabled = false;
+    const sub = await currentSub();
+    notifyToggle.checked = !!sub && Notification.permission === 'granted';
+    notifyHint.textContent = Notification.permission === 'denied' ? 'Blocked in Chrome\u2019s site settings' : notifyToggle.checked ? 'On for this device' : 'A morning ping when cards are waiting';
+  }
+  notifyToggle.addEventListener('change', async () => {
+    const want = notifyToggle.checked; notifyToggle.disabled = true;
+    try {
+      if (want) {
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') throw Object.assign(new Error('permission'), { perm });
+        const { publicKey } = await api('/api/push/key');
+        const reg = await navigator.serviceWorker.ready;
+        const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(publicKey) });
+        await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
+        toast('Notifications on for this device', COLORS.right);
+      } else {
+        const sub = await currentSub();
+        if (sub) { await api('/api/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {}); await sub.unsubscribe(); }
+        toast('Notifications off', '#fff');
+      }
+    } catch (e) {
+      toast(e.perm === 'denied' ? 'Notifications are blocked for this site in Chrome' : 'Couldn\u2019t change notifications', COLORS.left, 2600);
+    }
+    notifyToggle.disabled = false; refreshNotify();
+  });
+  if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.type === 'md-refresh' && !state.busy) loadDeck(); });
 
   greeting();
   render();
   loadConfig();
-  flushOutbox().finally(() => loadDeck({ initial: true }));
+
+  // ---------- First-run tutorial: a PRACTICE card that teaches the five gestures ----------
+  // Local only: it never calls the API, never touches state.deck and never records an answer.
+  const TOUR_KEY = 'md_tour_done';
+  const TOUR_STEPS = [
+    { g: 'right', icon: '→', title: 'Swipe right', say: 'Right means yes / the main choice.' },
+    { g: 'left', icon: '←', title: 'Swipe left', say: 'Left means no / the other choice.' },
+    { g: 'up', icon: '↑', title: 'Swipe up', say: 'Up means later: the card comes back.' },
+    { g: 'down', icon: '↓', title: 'Swipe down', say: 'Down means skip.' },
+    { g: 'tap3', icon: '•••', title: 'Triple-tap', say: 'Tap three times quickly to see details or type a reply.' },
+  ];
+  const tour = { open: false };
+  function tourDone() { try { return localStorage.getItem(TOUR_KEY) === '1'; } catch (_) { return true; } }
+  function closeTour(finished) {
+    if (!tour.open) return;
+    tour.open = false; try { localStorage.setItem(TOUR_KEY, '1'); } catch (_) {}
+    const w = tour.wrap; tour.wrap = null;
+    if (w) { w.classList.add('tour-out'); setTimeout(() => w.remove(), reduced() ? 0 : 220); }
+    if (finished) toast('You\u2019re ready. Practice answers were not saved.', COLORS.right, 2200);
+  }
+  function startTour() {
+    if (tour.open || state.locked) return;
+    tour.open = true; tour.step = 0;
+    const card = h('div', { class: 'tour-card', role: 'group', 'aria-label': 'Practice card' },
+      h('div', { class: 'tour-badge' }, 'PRACTICE \u00b7 not saved'),
+      h('div', { class: 'tour-icon', 'aria-hidden': 'true' }),
+      h('h3', { class: 'tour-title' }),
+      h('p', { class: 'tour-say' }),
+      h('p', { class: 'tour-note' }, 'This is a practice card. Nothing you do here is recorded or sent.'));
+    const dots = h('div', { class: 'tour-dots', 'aria-hidden': 'true' }, ...TOUR_STEPS.map(() => h('i')));
+    const skip = h('button', { type: 'button', class: 'tour-skip' }, 'Skip tutorial');
+    const live = h('p', { class: 'tour-live', 'aria-live': 'polite' });
+    const wrap = h('div', { class: 'tour-wrap', id: 'tourWrap', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'How to use Morning Deck (practice)' },
+      h('p', { class: 'tour-head' }, 'Quick tour \u00b7 5 gestures'), card, dots, live, skip);
+    tour.wrap = wrap; tour.card = card;
+    skip.addEventListener('click', () => closeTour(false));
+    document.body.append(wrap);
+    const show = () => {
+      const s = TOUR_STEPS[tour.step];
+      card.dataset.g = s.g; card.style.setProperty('--tc', COLORS[s.g]);
+      card.querySelector('.tour-icon').textContent = s.icon;
+      card.querySelector('.tour-title').textContent = `${tour.step + 1}/5 \u00b7 ${s.title}`;
+      card.querySelector('.tour-say').textContent = s.say;
+      wrap.dataset.step = s.g;
+      dots.querySelectorAll('i').forEach((d, i) => d.classList.toggle('on', i <= tour.step));
+      card.style.transition = 'none'; card.style.transform = ''; card.style.opacity = '';
+    };
+    const advance = (g) => {
+      const s = TOUR_STEPS[tour.step];
+      if (g !== s.g) { live.textContent = `That was ${g === 'tap3' ? 'a triple-tap' : 'a swipe ' + g}. Try: ${s.title.toLowerCase()}.`; buzz(8); card.style.transition = 'transform .22s cubic-bezier(.16,1,.3,1)'; card.style.transform = ''; card.classList.remove('tour-shake'); void card.offsetWidth; card.classList.add('tour-shake'); return; }
+      buzz(15); live.textContent = `${s.title}: got it.`;
+      const off = { right: [1, 0], left: [-1, 0], up: [0, -1], down: [0, 1], tap3: [0, 0] }[g];
+      card.style.transition = reduced() ? 'opacity .15s' : 'transform .26s cubic-bezier(.16,1,.3,1), opacity .26s';
+      if (!reduced()) card.style.transform = g === 'tap3' ? 'scale(1.06)' : `translate3d(${off[0] * 420}px, ${off[1] * 700}px, 0) rotate(${off[0] * 14}deg)`;
+      card.style.opacity = '0';
+      setTimeout(() => { if (!tour.open) return; tour.step++; if (tour.step >= TOUR_STEPS.length) return closeTour(true); show(); }, reduced() ? 160 : 280);
+    };
+    tour.advance = advance;
+    let start = null, taps = [];
+    card.addEventListener('pointerdown', (e) => { start = { x: e.clientX, y: e.clientY, t: performance.now() }; try { card.setPointerCapture(e.pointerId); } catch (_) {} card.style.transition = 'none'; }, { passive: true });
+    card.addEventListener('pointermove', (e) => { if (!start || reduced()) return; const dx = e.clientX - start.x, dy = e.clientY - start.y; card.style.transform = `translate3d(${dx}px, ${dy}px, 0) rotate(${dx / 20}deg)`; }, { passive: true });
+    const up = (e) => {
+      if (!start) return; const dx = e.clientX - start.x, dy = e.clientY - start.y; start = null;
+      const dist = Math.hypot(dx, dy), w = window.innerWidth;
+      if (dist > Math.min(90, w * 0.22)) { taps = []; return advance(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up')); }
+      card.style.transition = 'transform .2s'; card.style.transform = '';
+      if (dist < 12) { const t = performance.now(); taps = taps.filter((x) => t - x < 600); taps.push(t); if (taps.length >= 3) { taps = []; advance('tap3'); } }
+    };
+    card.addEventListener('pointerup', up);
+    card.addEventListener('pointercancel', () => { start = null; card.style.transform = ''; });
+    show();
+    skip.focus({ preventScroll: true });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (!tour.open) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    const k = { ArrowRight: 'right', ArrowLeft: 'left', ArrowUp: 'up', ArrowDown: 'down', Enter: 'tap3', ' ': 'tap3' }[e.key];
+    if (e.key === 'Escape') closeTour(false); else if (k) tour.advance(k);
+  }, true);
+  const tourRow = $('#tourRowBtn');
+  if (tourRow) tourRow.addEventListener('click', () => { panels.close('settings'); startTour(); });
+  window.__mdTour = { start: startTour, isOpen: () => tour.open }; // test hook (no data access)
+
+  flushOutbox().finally(() => loadDeck({ initial: true })).finally(() => { if (!state.locked && !tourDone() && new URLSearchParams(location.search).get('tour') !== '0') setTimeout(startTour, 500); });
   if ('serviceWorker' in navigator) {
     // App updates: the new SW skips waiting and claims this page; reload once to pick up the new shell,
     // but never mid-swipe, with the reply sheet open, or while an answer/photo is still being sent.
@@ -1227,5 +1731,5 @@
       document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
     }).catch((e) => console.warn('SW registration failed', e)));
   }
-  window.MorningDeck = { state, swipe, openSheet, closeSheet, undo, flushOutbox, syncViewport, confetti, install, diag, loadDeck, loadConfig, toast, config, render }; // used by the friends UI; handy for debugging
+  window.MorningDeck = { state, swipe, openSheet, undo, flushOutbox, syncViewport, confetti, install, diag, loadHistory, loadInsights, panels, applyTheme, render, openFold }; // handy for debugging
 })();
