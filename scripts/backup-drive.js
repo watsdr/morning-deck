@@ -70,6 +70,14 @@ function main() {
     fs.writeFileSync(path.join(dir, base), buf, { mode: 0o600 });
     out.push({ file: base, driveTitle: title, bytes: buf.length, sha256: sha(buf), mime: 'application/json' });
   }
+  // zone feeds (data/zones/*.json) -- lost once in the Oct 23 reboot, so they ride along now
+  const zdir = path.join(path.dirname(core.CARDS_FILE), 'zones');
+  if (fs.existsSync(zdir) && fs.readdirSync(zdir).some((n) => n.endsWith('.json'))) {
+    const zt = path.join(dir, 'zones.tar.gz');
+    execFileSync('tar', ['czf', zt, '-C', path.dirname(zdir), '--', ...fs.readdirSync(zdir).filter((n) => n.endsWith('.json')).map((n) => 'zones/' + n)]);
+    fs.chmodSync(zt, 0o600); const zb = fs.readFileSync(zt);
+    out.push({ file: 'zones.tar.gz', driveTitle: `morning-deck_${name}_zones.tar.gz`, bytes: zb.length, sha256: sha(zb), mime: 'application/gzip' });
+  }
   const tgz = path.join(dir, 'source.tar.gz');
   const files = buildTarball(tgz); fs.chmodSync(tgz, 0o600);
   const scan = scanTarball(tgz, secretsFromEnv());
