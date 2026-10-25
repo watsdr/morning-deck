@@ -17,6 +17,7 @@ const call = async (method, p, body, headers = {}) => { const r = await fetch(B 
 const results = []; let failed = 0;
 async function t(name, fn) { try { await fn(); results.push(['PASS', name]); console.log('PASS', name); } catch (e) { failed++; results.push(['FAIL', name, e.message]); console.log('FAIL', name, '-', e.message.slice(0, 600)); } }
 const iso = (ms) => new Date(Date.now() + ms).toISOString();
+const etDayEnd = () => { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', hour: 'numeric', minute: 'numeric', second: 'numeric' }).formatToParts(new Date()).map((x) => [x.type, +x.value || 0])); return Date.now() + ((23 - p.hour) * 3600 + (59 - p.minute) * 60 + (60 - p.second)) * 1000; };
 const sample = (id, extra = {}) => ({ id, source: 'Test Bot', sample: true, title: `SAMPLE ${id}`, body: 'Sample card created by the test suite.', ...extra });
 
 (async () => {
@@ -186,6 +187,23 @@ const sample = (id, extra = {}) => ({ id, source: 'Test Bot', sample: true, titl
     await page.click('.act-down'); await sleep(600);
     const a = await lastFor('g-undo'); assert.strictEqual(a.gesture, 'down');
     assert.deepStrictEqual(errs, []); await ctx.close();
+  });
+  // ---------- due chip + overdue style (pass 2) ----------
+  await t('due chip + overdue card style (dark + light)', async () => {
+    await call('POST', '/api/cards', [sample('due-over-card', { dueAt: iso(-2 * 86400e3), title: 'SAMPLE: overdue sample card' }), sample('due-today-card', { dueAt: new Date(Math.min(Date.now() + 30 * 60e3, etDayEnd() - 45e3)).toISOString(), title: 'SAMPLE: due-today sample card' })]);
+    for (const scheme of ['dark', 'light']) {
+      const s = await mk(scheme); const tp = await s.top(); assert.strictEqual(tp.id, 'due-over-card', 'most overdue card ranks first');
+      const info = await s.page.evaluate(() => { const c = document.querySelector('.card[data-depth="0"]'); return { cls: c.className, chip: (c.querySelector('.chip-due-over') || {}).textContent, line: (c.querySelector('.due-line.due-over') || {}).textContent, outline: getComputedStyle(c).outlineStyle }; });
+      assert.match(info.cls, /card-overdue/); assert.strictEqual(info.chip, 'Overdue'); assert.match(info.line || '', /^.?Overdue/); assert.strictEqual(info.outline, 'solid');
+      await s.page.screenshot({ path: path.join(SHOTS, `due-overdue-${scheme}.png`) });
+      await s.page.click('.act-left'); await sleep(900);
+      const t2 = await s.top(); assert.strictEqual(t2.id, 'due-today-card');
+      const chip = await s.page.textContent('.card[data-depth="0"] .chip-due-today'); assert.strictEqual(chip, 'Due today');
+      assert.match(await s.page.getAttribute('.card[data-depth="0"]', 'class'), /card-due-today/);
+      await s.page.screenshot({ path: path.join(SHOTS, `due-today-${scheme}.png`) });
+      if (scheme === 'dark') { const u = await call('POST', '/api/answers/undo', { cardId: 'due-over-card' }); assert.ok(u.status < 300, 'undo ' + u.status); }
+      assert.deepStrictEqual(s.errors, []); await s.ctx.close();
+    }
   });
   await browser.close();
   // ---------- summary ----------

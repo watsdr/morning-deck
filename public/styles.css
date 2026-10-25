@@ -788,3 +788,13 @@ html[data-theme="light"] .app-tile { background: rgba(255, 255, 255, .7); border
 .tour-shake { animation: tourShake .3s; }
 @keyframes tourShake { 25% { translate: -8px 0; } 75% { translate: 8px 0; } }
 @media (prefers-reduced-motion: reduce) { .tour-wrap, .tour-shake { animation: none !important; } }
+
+/* ---------- due chip + overdue card (pass 2) ---------- */
+.chip.chip-due-over { background: #d42a4f; color: #fff; }
+.chip.chip-due-today { background: #ffd666; color: #4a2c00; }
+.chip.chip-due-soon { background: #fff1d6; color: #9a5b00; }
+.card.card-overdue { outline: 3px solid #ff4d6d; outline-offset: -3px; }
+.card.card-overdue::before { content: ''; position: absolute; left: 0; top: 22px; bottom: 22px; width: 6px; border-radius: 0 6px 6px 0; background: #ff4d6d; z-index: 2; }
+.card.card-due-today { outline: 2px solid #ffd666; outline-offset: -2px; }
+@media (prefers-reduced-motion: no-preference) { .card.card-overdue .due-line.due-over { animation: dueThrob 2.4s ease-in-out 2; } }
+@keyframes dueThrob { 50% { filter: brightness(1.18); } }

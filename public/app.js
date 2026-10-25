@@ -296,7 +296,8 @@
     if (card.divider) return buildDivider(card);
     const g = card.gestures;
     const accent = card.color || '#7c6cf2';
-    const node = h('article', { class: 'card', 'data-id': card.id, 'data-type': card.type, 'data-builtin': card.builtin ? '1' : null, style: `--accent:${accent}`, 'aria-label': `${card.source}: ${card.title}` });
+    const due = dueInfo(card);
+    const node = h('article', { class: 'card' + (due && due.cls === 'due-over' ? ' card-overdue' : due && due.cls === 'due-today' ? ' card-due-today' : ''), 'data-due': due ? due.cls : null, 'data-id': card.id, 'data-type': card.type, 'data-builtin': card.builtin ? '1' : null, style: `--accent:${accent}`, 'aria-label': `${card.source}: ${card.title}` });
     node.append(h('div', { class: 'card-wash' }), h('div', { class: 'card-ring' }));
     if (card.sample) node.append(h('div', { class: 'ribbon', title: 'Example data, not a real request' }, 'SAMPLE'));
     node.append(h('header', { class: 'card-head' },
@@ -306,6 +307,7 @@
       ? h('div', { class: 'chips' }, h('span', { class: 'chip' }, 'Feedback'), h('span', { class: 'chip chip-soft' }, '1 minute'))
       : h('div', { class: 'chips' },
         h('span', { class: 'chip' }, TYPE_LABEL[card.type] || card.type),
+        due && due.cls !== 'due-later' ? h('span', { class: `chip chip-${due.cls}`, 'aria-label': due.text }, due.cls === 'due-over' ? 'Overdue' : due.cls === 'due-today' ? 'Due today' : 'Due tomorrow') : null,
         h('span', { class: `chip prio-${card.priority}` }, card.priority === 'high' ? 'High priority' : card.priority === 'low' ? 'Low' : 'Normal'),
         ...((a) => (a ? [h('span', { class: `chip ${a.cls}` }, a.text)] : []))(ageChip(card)),
         card.stale ? h('span', { class: 'chip chip-relevant', title: 'Pending 7+ days' }, 'Still relevant?') : null));
