@@ -10,7 +10,7 @@ const core = require('../lib/core');
 const sampleCards = require('./sample-cards');
 const ROOT = path.join(__dirname, '..');
 const PUB = path.join(ROOT, 'public');
-const OUT = path.join(ROOT, 'docs');
+const OUT = path.resolve(process.env.MD_PAGES_OUT || path.join(ROOT, 'docs')); // MD_PAGES_OUT: build the same static demo elsewhere
 
 // docs/ is generated, except hand-written guides (*.md), which are kept
 fs.mkdirSync(OUT, { recursive: true });
