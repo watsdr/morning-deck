@@ -585,11 +585,7 @@ const server = http.createServer(async (req, res) => {
   try { url = new URL(req.url, 'http://localhost'); } catch { return send(res, 400, 'bad url'); }
   res.on('finish', () => {
     const safePath = url.pathname + (url.searchParams.has('token') ? '?token=[redacted]' : '');
-    // TEMP diag (2026-10-20): presence/match flags and UA only, never credential values.
-    const ck = parseCookies(req)[COOKIE]; const ckf = !ck ? 'none' : (safeEq(ck, COOKIE_VALUE) ? 'ok' : 'stale');
-    const bh = (req.headers.authorization || '').startsWith('Bearer ') ? 'y' : 'n';
-    const ua = String(req.headers['user-agent'] || '-').replace(/[^\x20-\x7e]/g, '?').slice(0, 160);
-    console.log(`${new Date().toISOString()} ${req.method} ${safePath} ${res.statusCode} ${Date.now() - started}ms ck=${ckf} bearer=${bh} qtoken=${url.searchParams.has('token') ? 'y' : 'n'} sfs=${req.headers['sec-fetch-site'] || '-'} ua="${ua}"`);
+    console.log(`${new Date().toISOString()} ${req.method} ${safePath} ${res.statusCode} ${Date.now() - started}ms`);
   });
   try {
     if (url.pathname === '/.well-known/assetlinks.json' && (req.method === 'GET' || req.method === 'HEAD')) {

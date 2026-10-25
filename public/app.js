@@ -16,7 +16,7 @@
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
   const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
-  const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} };
+  const buzz = (p) => { if (reduced()) return; try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} };
 
   const MAX_PHOTOS = 6, MAX_EDGE = 1600, PHOTO_QUALITY = 0.85, MAX_UPLOAD = 8 * 1024 * 1024;
   const dragReset = {}; // swipe-down-to-dismiss resets per sheet (filled in by sheetDrag below)
@@ -422,6 +422,8 @@
 
   function renderCleared(celebrate) {
     el.cleared.hidden = false;
+    const heading = el.cleared.querySelector('h2');
+    if (heading) heading.textContent = reduced() ? 'All done' : 'All caught up';
     const list = state.session.length ? state.session.map((e) => ({ card: e.card, gesture: e.gesture, label: e.card.gestures[e.gesture].label, text: e.payload.text, pics: e.photos.length }))
       : (state.todayAnswers || []).map((a) => ({ card: { title: a.cardTitle, source: a.source, emoji: a.builtin ? '🌅' : '' }, gesture: a.gesture, label: a.label, text: a.text, pics: (a.attachments || []).length }));
     $('#clearedSub').textContent = list.length
@@ -669,8 +671,17 @@
     return (t) => { const e = Math.exp(-z * w0 * t), c = Math.cos(wd * t), s = Math.sin(wd * t); return [e * (x0 * c + B * s), e * ((B * wd - z * w0 * x0) * c - (x0 * wd + z * w0 * B) * s)]; };
   }
   function springBack(node, from, v) {
+    if (reduced()) {
+      // Short slide back to rest instead of the damped spring (tilt included).
+      node._pos = null;
+      node.classList.remove('dragging');
+      clearFeedback(node);
+      node.classList.add('rm-short');
+      requestAnimationFrame(() => { node.style.transform = ''; });
+      setTimeout(() => { node.classList.remove('rm-short'); if (!drag) live(false); }, 200);
+      return;
+    }
     node.classList.add('dragging');
-    if (reduced()) { node._pos = null; node.style.transform = ''; node.classList.remove('dragging'); clearFeedback(node); if (!drag) live(false); return; }
     resetFx(node);
     live(true);
     const sx = springAxis(from.x, v.x * 1000), sy = springAxis(from.y, v.y * 1000), sr = springAxis(from.rot, 0);
@@ -721,7 +732,18 @@
       for (const d of DIRS) { actBtn[d].style.transform = ''; actBtn[d]._t = ''; }
       if (!topAnim) live(false);
     };
-    if (reduced()) { commit(card, dir, opts.text, opts.photos); node.style.transition = 'opacity .15s'; node.style.opacity = 0; setTimeout(finish, 160); return; }
+    if (reduced()) {
+      commit(card, dir, opts.text, opts.photos);
+      node.classList.remove('dragging');
+      node.classList.add('rm-short');
+      const nudge = 28;
+      const dx = dir === 'right' ? nudge : dir === 'left' ? -nudge : 0;
+      const dy = dir === 'down' ? nudge : dir === 'up' ? -nudge : 0;
+      const x = from.x + dx, y = from.y + dy;
+      requestAnimationFrame(() => { node.style.opacity = '0'; node.style.transform = `translate3d(${r3(x)}px, ${r3(y)}px, 0)`; });
+      setTimeout(finish, 200);
+      return;
+    }
     // Same physics as before, pre-computed into keyframes at 120 Hz and handed to the compositor.
     const kf = [{ transform: `translate3d(${r3(x)}px, ${r3(y)}px, 0) rotate(${r3(r)}deg)` }];
     const dt = 1 / 120; let t = 0;
@@ -949,7 +971,12 @@
     const ring = node.querySelector('.card-ring'); ring.style.setProperty('--glow', rgba(COLORS.tap3, 0.9)); ring.style.opacity = 1;
     node.style.boxShadow = `0 0 60px ${rgba(COLORS.tap3, 0.6)}`;
     commit(card, 'tap3', text, photos);
-    if (reduced()) { node.remove(); return; }
+    if (reduced()) {
+      node.classList.add('rm-short');
+      requestAnimationFrame(() => { node.style.opacity = '0'; node.style.transform = 'translate3d(0,-24px,0)'; });
+      setTimeout(() => node.remove(), 200);
+      return;
+    }
     node.style.transition = 'transform .55s cubic-bezier(.5,-0.4,.7,.4), opacity .5s ease-in';
     setTimeout(() => { node.style.transform = 'translate3d(0,-120%,0) scale(.7) rotate(-6deg)'; node.style.opacity = 0; }, 260);
     setTimeout(() => node.remove(), 900);
@@ -1164,7 +1191,11 @@
   // Light: ~130 pieces, canvas capped at 1.5x pixels, one setTransform per piece (no save/restore), batched by colour.
   let confettiRun = null;
   function confetti() {
-    if (reduced()) return;
+    if (reduced()) {
+      const cv = $('#confetti');
+      if (cv) { cv.hidden = true; cv.width = 0; cv.height = 0; }
+      return;
+    }
     if (confettiRun) confettiRun.stop();
     const cv = $('#confetti'); const ctx = cv.getContext('2d');
     const dpr = Math.min(1.5, window.devicePixelRatio || 1);
@@ -1597,7 +1628,90 @@
   greeting();
   render();
   loadConfig();
-  flushOutbox().finally(() => loadDeck({ initial: true }));
+
+  // ---------- First-run tutorial: a PRACTICE card that teaches the five gestures ----------
+  // Local only: it never calls the API, never touches state.deck and never records an answer.
+  const TOUR_KEY = 'md_tour_done';
+  const TOUR_STEPS = [
+    { g: 'right', icon: '→', title: 'Swipe right', say: 'Right means yes / the main choice.' },
+    { g: 'left', icon: '←', title: 'Swipe left', say: 'Left means no / the other choice.' },
+    { g: 'up', icon: '↑', title: 'Swipe up', say: 'Up means later: the card comes back.' },
+    { g: 'down', icon: '↓', title: 'Swipe down', say: 'Down means skip.' },
+    { g: 'tap3', icon: '•••', title: 'Triple-tap', say: 'Tap three times quickly to see details or type a reply.' },
+  ];
+  const tour = { open: false };
+  function tourDone() { try { return localStorage.getItem(TOUR_KEY) === '1'; } catch (_) { return true; } }
+  function closeTour(finished) {
+    if (!tour.open) return;
+    tour.open = false; try { localStorage.setItem(TOUR_KEY, '1'); } catch (_) {}
+    const w = tour.wrap; tour.wrap = null;
+    if (w) { w.classList.add('tour-out'); setTimeout(() => w.remove(), reduced() ? 0 : 220); }
+    if (finished) toast('You\u2019re ready. Practice answers were not saved.', COLORS.right, 2200);
+  }
+  function startTour() {
+    if (tour.open || state.locked) return;
+    tour.open = true; tour.step = 0;
+    const card = h('div', { class: 'tour-card', role: 'group', 'aria-label': 'Practice card' },
+      h('div', { class: 'tour-badge' }, 'PRACTICE \u00b7 not saved'),
+      h('div', { class: 'tour-icon', 'aria-hidden': 'true' }),
+      h('h3', { class: 'tour-title' }),
+      h('p', { class: 'tour-say' }),
+      h('p', { class: 'tour-note' }, 'This is a practice card. Nothing you do here is recorded or sent.'));
+    const dots = h('div', { class: 'tour-dots', 'aria-hidden': 'true' }, ...TOUR_STEPS.map(() => h('i')));
+    const skip = h('button', { type: 'button', class: 'tour-skip' }, 'Skip tutorial');
+    const live = h('p', { class: 'tour-live', 'aria-live': 'polite' });
+    const wrap = h('div', { class: 'tour-wrap', id: 'tourWrap', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'How to use Morning Deck (practice)' },
+      h('p', { class: 'tour-head' }, 'Quick tour \u00b7 5 gestures'), card, dots, live, skip);
+    tour.wrap = wrap; tour.card = card;
+    skip.addEventListener('click', () => closeTour(false));
+    document.body.append(wrap);
+    const show = () => {
+      const s = TOUR_STEPS[tour.step];
+      card.dataset.g = s.g; card.style.setProperty('--tc', COLORS[s.g]);
+      card.querySelector('.tour-icon').textContent = s.icon;
+      card.querySelector('.tour-title').textContent = `${tour.step + 1}/5 \u00b7 ${s.title}`;
+      card.querySelector('.tour-say').textContent = s.say;
+      wrap.dataset.step = s.g;
+      dots.querySelectorAll('i').forEach((d, i) => d.classList.toggle('on', i <= tour.step));
+      card.style.transition = 'none'; card.style.transform = ''; card.style.opacity = '';
+    };
+    const advance = (g) => {
+      const s = TOUR_STEPS[tour.step];
+      if (g !== s.g) { live.textContent = `That was ${g === 'tap3' ? 'a triple-tap' : 'a swipe ' + g}. Try: ${s.title.toLowerCase()}.`; buzz(8); card.style.transition = 'transform .22s cubic-bezier(.16,1,.3,1)'; card.style.transform = ''; card.classList.remove('tour-shake'); void card.offsetWidth; card.classList.add('tour-shake'); return; }
+      buzz(15); live.textContent = `${s.title}: got it.`;
+      const off = { right: [1, 0], left: [-1, 0], up: [0, -1], down: [0, 1], tap3: [0, 0] }[g];
+      card.style.transition = reduced() ? 'opacity .15s' : 'transform .26s cubic-bezier(.16,1,.3,1), opacity .26s';
+      if (!reduced()) card.style.transform = g === 'tap3' ? 'scale(1.06)' : `translate3d(${off[0] * 420}px, ${off[1] * 700}px, 0) rotate(${off[0] * 14}deg)`;
+      card.style.opacity = '0';
+      setTimeout(() => { if (!tour.open) return; tour.step++; if (tour.step >= TOUR_STEPS.length) return closeTour(true); show(); }, reduced() ? 160 : 280);
+    };
+    tour.advance = advance;
+    let start = null, taps = [];
+    card.addEventListener('pointerdown', (e) => { start = { x: e.clientX, y: e.clientY, t: performance.now() }; try { card.setPointerCapture(e.pointerId); } catch (_) {} card.style.transition = 'none'; }, { passive: true });
+    card.addEventListener('pointermove', (e) => { if (!start || reduced()) return; const dx = e.clientX - start.x, dy = e.clientY - start.y; card.style.transform = `translate3d(${dx}px, ${dy}px, 0) rotate(${dx / 20}deg)`; }, { passive: true });
+    const up = (e) => {
+      if (!start) return; const dx = e.clientX - start.x, dy = e.clientY - start.y; start = null;
+      const dist = Math.hypot(dx, dy), w = window.innerWidth;
+      if (dist > Math.min(90, w * 0.22)) { taps = []; return advance(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up')); }
+      card.style.transition = 'transform .2s'; card.style.transform = '';
+      if (dist < 12) { const t = performance.now(); taps = taps.filter((x) => t - x < 600); taps.push(t); if (taps.length >= 3) { taps = []; advance('tap3'); } }
+    };
+    card.addEventListener('pointerup', up);
+    card.addEventListener('pointercancel', () => { start = null; card.style.transform = ''; });
+    show();
+    skip.focus({ preventScroll: true });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (!tour.open) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    const k = { ArrowRight: 'right', ArrowLeft: 'left', ArrowUp: 'up', ArrowDown: 'down', Enter: 'tap3', ' ': 'tap3' }[e.key];
+    if (e.key === 'Escape') closeTour(false); else if (k) tour.advance(k);
+  }, true);
+  const tourRow = $('#tourRowBtn');
+  if (tourRow) tourRow.addEventListener('click', () => { panels.close('settings'); startTour(); });
+  window.__mdTour = { start: startTour, isOpen: () => tour.open }; // test hook (no data access)
+
+  flushOutbox().finally(() => loadDeck({ initial: true })).finally(() => { if (!state.locked && !tourDone() && new URLSearchParams(location.search).get('tour') !== '0') setTimeout(startTour, 500); });
   if ('serviceWorker' in navigator) {
     // App updates: the new SW skips waiting and claims this page; reload once to pick up the new shell,
     // but never mid-swipe, with the reply sheet open, or while an answer/photo is still being sent.
