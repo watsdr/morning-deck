@@ -11,5 +11,5 @@ exec 9>run/nightly-backup.lock; flock -n 9 || { echo "already running"; exit 0; 
 echo $$ > run/nightly-backup.pid; echo "$(date -Is) loop start, daily at $AT" >> "$LOG"
 while true; do
   next=$(date -d "today $AT" +%s); [ "$next" -le "$(date +%s)" ] && next=$(date -d "tomorrow $AT" +%s)
-  sleep $(( next - $(date +%s) )); run
+  sleep $(( next - $(date +%s) )) 9>&- & wait $!; run 9>&-
 done
