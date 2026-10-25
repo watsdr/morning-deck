@@ -1296,7 +1296,7 @@
     if (install.installed || isStandalone()) { installBtn.hidden = true; return; }
     installBtn.dataset.mode = mode;
     installBtn.querySelector('span').textContent = mode === 'prompt' ? 'Install app' : 'Install';
-    installBtn.setAttribute('aria-label', mode === 'prompt' ? 'Install Morning Deck' : 'How to install Morning Deck');
+    installBtn.setAttribute('aria-label', mode === 'prompt' ? 'Install app: Morning Deck' : 'Install: how to add Morning Deck to your home screen'); // label starts with the visible text (WCAG 2.5.3)
     installBtn.hidden = false;
   }
   const openInstallHelp = () => { dragReset.install && dragReset.install(); installWrap.hidden = false; $('#installDone').focus({ preventScroll: true }); };

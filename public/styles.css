@@ -219,15 +219,15 @@ button { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
   padding: 5px 10px; border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 12%, #fff); color: color-mix(in srgb, var(--accent) 75%, #1d1832);
+  background: color-mix(in srgb, var(--accent) 12%, #fff); color: color-mix(in srgb, var(--accent) 55%, #1d1832); /* >= 4.5:1 on the tinted chip for every bot accent (axe color-contrast) */
 }
-.chip.prio-high { background: #ffe8ec; color: #d42a4f; }
+.chip.prio-high { background: #ffe8ec; color: #b01c3e; }
 .chip.prio-high { position: relative; }
 .chip.prio-high::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px rgba(212, 42, 79, .18); }
 .chip.prio-high::after { content: ""; position: absolute; left: 10px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: rgba(212, 42, 79, .3); pointer-events: none; opacity: 0; }
 .card[data-depth="0"]:not(.dragging) .chip.prio-high::after { animation: pulse 1.8s ease-out infinite; } /* only the resting top card pulses */
 .chip.prio-normal { background: #eef0f7; color: #56607a; }
-.chip.prio-low { background: #eaf6f0; color: #2d8a63; }
+.chip.prio-low { background: #eaf6f0; color: #1d6e4c; }
 @keyframes pulse { 0% { transform: scale(1); opacity: 1; } 70%, 100% { transform: scale(2.7); opacity: 0; } }
 .card h2 { margin: 2px 0 10px; font-size: 25px; line-height: 1.18; font-weight: 800; letter-spacing: -.025em; color: var(--ink); text-wrap: balance; }
 .card .body {
@@ -301,7 +301,7 @@ button { font: inherit; color: inherit; }
     radial-gradient(90% 55% at 100% 105%, rgba(255, 196, 120, .28), transparent 70%),
     linear-gradient(180deg, #fffefd, #fff6f0);
 }
-.chip.chip-soft { background: #fff1e3; color: #b86a1e; }
+.chip.chip-soft { background: #fff1e3; color: #8a4a0e; }
 .fb-ideas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .fb-ideas span {
   display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px 7px 9px; border-radius: 999px;
@@ -593,7 +593,7 @@ textarea:focus { border-color: var(--tap3); box-shadow: 0 0 0 4px color-mix(in s
 .toast-act { margin-left: 12px; padding: 6px 12px; border: 0; border-radius: 999px; font: inherit; font-weight: 800; color: #1b1440; background: #ffd666; cursor: pointer; min-height: 32px; }
 /* age / expiry chips */
 .chip.chip-stale { background: #fff1d6; color: #9a5b00; }
-.chip.chip-due { background: #ffe8ec; color: #d42a4f; }
+.chip.chip-due { background: #ffe8ec; color: #b01c3e; }
 
 /* ---------- settings + history panels (2026-10-19) ---------- */
 .icon-btn {
@@ -790,7 +790,7 @@ html[data-theme="light"] .app-tile { background: rgba(255, 255, 255, .7); border
 @media (prefers-reduced-motion: reduce) { .tour-wrap, .tour-shake { animation: none !important; } }
 
 /* ---------- due chip + overdue card (pass 2) ---------- */
-.chip.chip-due-over { background: #d42a4f; color: #fff; }
+.chip.chip-due-over { background: #b01c3e; color: #fff; }
 .chip.chip-due-today { background: #ffd666; color: #4a2c00; }
 .chip.chip-due-soon { background: #fff1d6; color: #9a5b00; }
 .card.card-overdue { outline: 3px solid #ff4d6d; outline-offset: -3px; }
