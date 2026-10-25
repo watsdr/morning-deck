@@ -3,7 +3,7 @@
 // if 8799 is busy with something else, the next free port up to 8809 is used and reported). Never touches 8787 or data/.
 const { spawnSync } = require('child_process');
 const net = require('net');
-const SUITES = [['test/pass1.js', '--empty'], ['test/device-approval.js', '--empty'], ['test/qr-pairing.js', '--empty'], ['test/backups.js', '--empty']];
+const SUITES = [['test/pass1.js', '--empty'], ['test/device-approval.js', '--empty'], ['test/qr-pairing.js', '--empty'], ['test/backups.js', '--empty'], ['test/offline-sync.js']];
 const free = (p) => new Promise((r) => { const s = net.createServer().once('error', () => r(false)).once('listening', () => s.close(() => r(true))).listen(p, '127.0.0.1'); });
 (async () => {
   let port = +(process.env.MD_TEST_PORT || 8799);
