@@ -48,6 +48,7 @@ fs.writeFileSync(path.join(OUT, 'styles.css'), fs.readFileSync(path.join(PUB, 's
 // manifest: everything relative to the manifest URL, so scope/start_url = the repo subpath
 const man = JSON.parse(fs.readFileSync(path.join(PUB, 'manifest.webmanifest'), 'utf8'));
 Object.assign(man, { id: './', start_url: './?source=pwa', scope: './', name: 'Morning Deck (demo)' });
+man.shortcuts = (man.shortcuts || []).filter((sc) => !/(^|\/)(main-menu|hub-world)(\/|$)/.test(sc.url || '')); // static builds have neither folder
 man.icons = man.icons.map((i) => ({ ...i, src: i.src.replace(/^\//, '') }));
 fs.writeFileSync(path.join(OUT, 'manifest.webmanifest'), JSON.stringify(man, null, 2) + '\n');
 
@@ -78,6 +79,8 @@ self.addEventListener('fetch', (e) => {
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
 console.log(`docs/ built: ${deck.cards.length} demo cards, sw ${version}`);
 
+// MD_PAGES_OUT builds (the App Hub demo) are the deck only: no friends/ subfolder
+if (process.env.MD_PAGES_OUT) { console.log('friends/ skipped (MD_PAGES_OUT build)'); process.exit(0); }
 // ---------- Morning Deck for Friends: docs/friends/ (static, runs entirely in each friend's browser) ----------
 const FSRC = path.join(ROOT, 'friends');
 const FOUT = path.join(OUT, 'friends');

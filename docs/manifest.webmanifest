@@ -39,18 +39,6 @@
           "type": "image/png"
         }
       ]
-    },
-    {
-      "name": "Main Menu",
-      "short_name": "Main Menu",
-      "url": "/main-menu/",
-      "icons": [
-        {
-          "src": "/icons/icon-192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        }
-      ]
     }
   ],
   "icons": [
