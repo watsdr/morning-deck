@@ -359,7 +359,7 @@
     const accent = card.color || '#7c6cf2';
     const due = dueInfo(card);
     const node = h('article', { class: 'card' + (due && due.cls === 'due-over' ? ' card-overdue' : due && due.cls === 'due-today' ? ' card-due-today' : ''), 'data-due': due ? due.cls : null, 'data-id': card.id, 'data-type': card.type, 'data-builtin': card.builtin ? '1' : null, style: `--accent:${accent}`, 'aria-label': `${card.source}: ${card.title}` });
-    node.append(h('div', { class: 'card-wash' }), h('div', { class: 'card-ring' }));
+    node.append(h('div', { class: 'card-lit', 'aria-hidden': 'true' }), h('div', { class: 'card-wash' }), h('div', { class: 'card-edge', 'aria-hidden': 'true' }), h('div', { class: 'card-ring' }));
     if (card.sample) node.append(h('div', { class: 'ribbon', title: 'Example data, not a real request' }, 'SAMPLE'));
     node.append(h('header', { class: 'card-head' },
       avatarFor(card),
@@ -505,7 +505,7 @@
       h('span', { class: 'e' }, x.card.emoji || '•'),
       h('div', { class: 't' }, h('div', {}, x.card.title), h('small', {}, [x.card.source, x.pics ? `📷 ${x.pics}` : '', x.text ? `“${x.text}”` : ''].filter(Boolean).join(' · '))),
       h('span', { class: 'a', style: `--c:${COLORS[x.gesture]}` }, x.gesture === 'tap3' ? 'Replied' : x.label))));
-    if (celebrate) { confetti(); buzz(HAPTIC.cleared); sfx.chime(); }
+    if (celebrate) { confetti(); burst(); buzz(HAPTIC.cleared); sfx.chime(); }
     showStreak();
   }
   // Streak flame on the cleared screen: read-only GET of the insights summary; hidden unless the streak is 1+ days.
@@ -573,7 +573,7 @@
   // element refs per card, collected once (buildCard) instead of querySelectorAll on every move
   function fxOf(node) {
     if (node._fx) return node._fx;
-    const fx = { stamps: {}, hints: {}, wash: node.querySelector('.card-wash'), ring: node.querySelector('.card-ring'), last: restingFx() };
+    const fx = { stamps: {}, hints: {}, wash: node.querySelector('.card-wash'), edge: node.querySelector('.card-edge'), ring: node.querySelector('.card-ring'), last: restingFx() };
     for (const s of node.querySelectorAll('.stamp')) fx.stamps[s.className.match(/stamp-(\w+)/)[1]] = s;
     for (const hn of node.querySelectorAll('.hint')) fx.hints[hn.className.match(/hint-(\w+)/)[1]] = hn;
     return (node._fx = fx);
@@ -605,11 +605,12 @@
         fx.wash.style.background = `linear-gradient(${to}, transparent 25%, ${rgba(c, 0.32)} 100%)`;
         fx.ring.style.setProperty('--glow', rgba(c, 0.85));
         el.tint.style.setProperty('--tint', rgba(c, 0.55));
+        if (fx.edge) fx.edge.dataset.dir = cdir; // pack v2 direction glow (image per direction; opacity from --pull)
       }
       last.cdir = cdir;
     }
     const a = cdir ? qr : 0;
-    if (last.a !== a) { fx.wash.style.opacity = a; fx.ring.style.opacity = a; el.tint.style.opacity = r3(a * 0.8); last.a = a; }
+    if (last.a !== a) { if (fx.edge) fx.edge.style.setProperty('--pull', a); fx.wash.style.opacity = a; fx.ring.style.opacity = a; el.tint.style.opacity = r3(a * 0.8); last.a = a; }
     const bs = dir ? qr : 0;
     if (last.bdir !== dir || last.bs !== bs) {
       for (const d of DIRS) { const t = d === dir ? `scale(${r3(1 + 0.18 * bs)})` : ''; if ((actBtn[d]._t ?? '') !== t) { actBtn[d].style.transform = t; actBtn[d]._t = t; } }
@@ -628,7 +629,7 @@
       }
       last.rise = rise; last.par = par;
     }
-    if (dir && p >= 1 && !node._armed) { node._armed = true; buzz(HAPTIC.arm); } else if (p < 1) node._armed = false;
+    if (dir && p >= 1 && !node._armed) { node._armed = true; buzz(HAPTIC.arm); stampSquash(fxOf(node).stamps[dir]); } else if (p < 1) node._armed = false;
   }
   function clearFeedback(node) {
     setFeedback(node, null, 0);
@@ -636,6 +637,11 @@
     for (const b of el.stack.querySelectorAll('.card')) if (b !== node) { b.classList.remove('dragging'); b.style.transform = ''; b.style.opacity = ''; }
     el.tint.style.opacity = 0;
     const fx = fxOf(node); fx.behind = null; fx.last = restingFx();
+  }
+  // pack v2 stamp squash: when the stamp locks in at the threshold it lands with squash & stretch (individual 'scale' only)
+  function stampSquash(s) {
+    if (!s || !s.animate || reduced()) return;
+    s.animate([{ scale: '1.18 0.86' }, { scale: '0.94 1.06', offset: 0.4 }, { scale: '1.02 0.98', offset: 0.7 }, { scale: '1' }], { duration: 380, easing: 'cubic-bezier(.05,.7,.1,1)' });
   }
   function place(node, x, y, rot) { node.style.transform = `translate3d(${r3(x)}px, ${r3(y)}px, 0) rotate(${r3(rot)}deg)`; }
   // mid-animation the DOM isn't at rest, so the first frame rewrites everything; at rest only changes are written
@@ -1277,6 +1283,13 @@
   // then stop the loop and hide the canvas so the summary underneath is clean and tappable. Canvas is pointer-events:none.
   // Light: ~130 pieces, canvas capped at 1.5x pixels, one setTransform per piece (no save/restore), batched by colour.
   let confettiRun = null;
+  // pack v2 confetti burst (self-animating SVG: hit flash + particles) at the sun; restarted by re-setting src
+  function burst() {
+    const b = $('#fxBurst'); if (!b) return;
+    if (reduced()) { b.hidden = true; return; }
+    b.hidden = false; b.src = '/assets/v2/confetti-burst.svg?' + Date.now();
+    clearTimeout(burst._t); burst._t = setTimeout(() => { b.hidden = true; }, 1400);
+  }
   function confetti() {
     if (reduced()) {
       const cv = $('#confetti');

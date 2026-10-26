@@ -868,3 +868,29 @@ html[data-theme="light"] .sky { background:
 }
 html.reduce-fx .sunrise .fx-rays, html.reduce-fx .fx-flame { animation: none !important; }
 html.reduce-fx .tour-hand { animation: none !important; opacity: .85; }
+
+/* ---------- AAA asset pack v2 (transform/opacity only; off under reduced motion + Reduce effects) ---------- */
+/* Lit card: key light from top-left + edge ambient occlusion + rim, as static overlays on the existing light material
+   (pack's dark card-lit.svg body would fight the light card, so only its lighting layers are adopted). */
+.card-lit { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; z-index: -1; /* above the card background, below content (card is a stacking context) */
+  background: radial-gradient(100% 70% at 15% 0%, rgba(255, 255, 255, .5), transparent 55%),
+    radial-gradient(75% 75% at 50% 50%, transparent 72%, rgba(40, 20, 80, .10) 100%);
+  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, .9), inset 0 -1px 0 rgba(124, 108, 242, .14); }
+/* Direction glow: pack edge-glow image for the pending direction, opacity driven by --pull (0..1) on this element only */
+.card-edge { position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  opacity: var(--pull, 0); background: center / 100% 100% no-repeat; }
+.card-edge[data-dir="right"] { background-image: url(assets/v2/edge-glow-right.svg); }
+.card-edge[data-dir="left"] { background-image: url(assets/v2/edge-glow-left.svg); }
+.card-edge[data-dir="up"] { background-image: url(assets/v2/edge-glow-up.svg); }
+.card-edge[data-dir="down"] { background-image: url(assets/v2/edge-glow-down.svg); }
+.card[data-depth="0"] .card-edge { will-change: opacity; }
+.card:not([data-depth="0"]) .card-edge { opacity: 0 !important; }
+/* Aurora depth: layered light blobs over the v1 aurora (dark theme only) */
+.sky { background:
+    radial-gradient(120% 60% at 50% 112%, rgba(255, 179, 122, .85) 0%, rgba(242, 119, 110, .55) 22%, rgba(160, 64, 150, 0) 60%),
+    url(/assets/v2/aurora-depth.webp) center / cover, url(/assets/bg/bg-aurora.webp) center / cover, #1d1442; }
+/* Confetti burst at the sun on clear */
+.sunrise .fx-burst { position: absolute; left: 50%; bottom: -40px; width: 180px; height: 180px; margin-left: -90px; pointer-events: none; }
+.fx-flame { width: 22px; height: 22px; }
+@media (prefers-reduced-motion: reduce) { .sunrise .fx-burst { display: none !important; } }
+html.reduce-fx .sunrise .fx-burst { display: none !important; }
