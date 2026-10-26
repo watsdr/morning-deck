@@ -17,6 +17,7 @@ const btnInfo = (page) => page.evaluate(() => { const b = document.querySelector
 (async () => {
   const errors = [];
   const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox', '--bypass-app-banner-engagement-checks'] });
+  require("./skip-tour")(browser);
   const newPage = async (init) => {
     const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625,
       userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36' });
@@ -32,6 +33,7 @@ const btnInfo = (page) => page.evaluate(() => { const b = document.querySelector
   {
     const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'md-prof-')), { executablePath: '/usr/bin/google-chrome', headless: true,
       args: ['--no-sandbox', '--bypass-app-banner-engagement-checks'], viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625 });
+    await require('./skip-tour')(ctx);
     await ctx.addInitScript(() => { window.__bip = 0; window.addEventListener('beforeinstallprompt', () => { window.__bip++; }); });
     const page = ctx.pages()[0] || await ctx.newPage();
     page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) errors.push(m.text()); });
@@ -117,6 +119,7 @@ const btnInfo = (page) => page.evaluate(() => { const b = document.querySelector
     try {
       for (let i = 0; i < 50; i++) { try { if ((await fetch(SB + '/sw.js')).ok) break; } catch {} await sleep(100); }
       const b2 = await chromium.launch({ executablePath: '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
+      require("./skip-tour")(b2);
       const ctx = await b2.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true });
       const page = await ctx.newPage();
       page.on('pageerror', (e) => errors.push(e.message));

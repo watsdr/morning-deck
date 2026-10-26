@@ -45,6 +45,8 @@ const answers = [ans('fa1', 'fake-gym', 'right', 'Yes', -1), ans('fa2', 'fake-tr
   assert.ok(mf.shortcuts.every((s) => s.url.startsWith('/')), 'same-origin shortcuts');
 
   const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] });
+
+  require("./skip-tour")(browser);
   const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, timezoneId: 'America/New_York', serviceWorkers: 'block' });
   await ctx.addInitScript(() => { // deterministic voice support in headless Chrome (no real mic / TTS)
     if (!window.webkitSpeechRecognition) window.webkitSpeechRecognition = function () { this.start = () => {}; this.abort = () => {}; };

@@ -20,6 +20,7 @@ const api = async (p, o = {}) => (await fetch(BASE + p, { ...o, headers: { Autho
   const u = await api('/api/answers', { method: 'POST', body: JSON.stringify({ cardId: deck[2].id, gesture: 'left' }) });
   await api('/api/answers/undo', { method: 'POST', body: JSON.stringify({ answerId: u.answer.id }) });
   const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] });
+  require("./skip-tour")(browser);
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, timezoneId: 'America/New_York', permissions: ['notifications'] });
   const page = await ctx.newPage();
   await page.goto(`${BASE}/?token=${env.MD_TOKEN}`, { waitUntil: 'networkidle' });

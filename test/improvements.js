@@ -17,6 +17,7 @@ let fails = 0; const ok = (c, m) => { console.log(`${c ? 'PASS' : 'FAIL'} ${m}`)
     { id: 'test-due', source: 'Test bot', title: 'TEST due card', expiresAt: new Date(now + 3 * 3600e3).toISOString(), priority: 'high' },
   ]) });
   const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] });
+  require("./skip-tour")(browser);
   const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, timezoneId: 'America/New_York' });
   const page = await ctx.newPage();
   const errs = []; page.on('pageerror', (e) => errs.push(e.message));

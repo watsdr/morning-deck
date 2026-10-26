@@ -16,6 +16,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const r = spawnSync(process.execPath, ['scripts/assemble.js', '--resolved', path.join(D, 'none.md')], { cwd: ROOT, env: { ...process.env, MD_RUN_DIR: path.join(D, 'run') }, encoding: 'utf8' });
   if (r.status) throw new Error(r.stderr);
   const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] });
+  require("./skip-tour")(browser);
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, timezoneId: 'America/New_York' });
   const page = await ctx.newPage();
   await page.goto(`${B}/?token=${tok}`, { waitUntil: 'networkidle' });

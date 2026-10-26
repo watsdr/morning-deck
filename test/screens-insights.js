@@ -15,6 +15,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   fs.mkdirSync(OUT, { recursive: true });
   if (!LIVE) require('./insights-fixture')(DATA);
   const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] });
+  require("./skip-tour")(browser);
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, timezoneId: 'America/New_York', serviceWorkers: 'block' });
   // read-only: only GETs reach the server (no answers, no diag beacons)
   await ctx.route('**/*', (route) => (route.request().method() === 'GET' ? route.continue() : route.fulfill({ status: 204, body: '' })));

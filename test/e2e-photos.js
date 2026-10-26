@@ -47,6 +47,8 @@ const grid = (w, h) => (x, y) => ((x >> 5) + (y >> 5)) & 1 ? [255, 122, 89] : [2
   ok('feedbackCardShape', fb && fb.source === 'Morning Deck' && !fb.sample && fb.gestures.right.label === 'Love it' && fb.gestures.left.value === 'something_off' && fb.gestures.down.value === 'skip' && fb.gestures.up.snooze && fb.gestures.tap3.label === 'Suggest', fb && { emoji: fb.emoji, color: fb.color, gestures: Object.fromEntries(Object.entries(fb.gestures).map(([k, v]) => [k, `${v.label}=${v.value}`])) });
 
   const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] });
+
+  require("./skip-tour")(browser);
   const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 2.625, isMobile: true, hasTouch: true, timezoneId: 'America/New_York',
     userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36' });
   const page = await ctx.newPage();
