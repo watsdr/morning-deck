@@ -12,11 +12,61 @@
     up: '<path d="M12 19V5M6 11l6-6 6 6"/>', down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
   };
   const TYPE_LABEL = { question: 'Question', choice: 'Choice', info: 'FYI' };
-  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Feel prefs (Settings): haptics default on, sound default off, "Reduce effects" default off (OS reduced-motion also counts).
+  const PREF = { haptics: 'md_haptics', sound: 'md_sound', reduceFx: 'md_reduce_fx' };
+  const pref = (k, dflt) => { try { const v = localStorage.getItem(PREF[k]); return v === null ? dflt : v === '1'; } catch (_) { return dflt; } };
+  const prefs = { haptics: pref('haptics', true), sound: pref('sound', false), reduceFx: pref('reduceFx', false) };
+  const reduced = () => prefs.reduceFx || matchMedia('(prefers-reduced-motion: reduce)').matches;
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
   const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
-  const buzz = (p) => { if (reduced()) return; try { navigator.vibrate && navigator.vibrate(p); } catch (_) {} };
+  // Haptics: behind the Haptics toggle, guarded (iOS Safari has no vibrate); single pulses capped at 40 ms.
+  const buzz = (p) => { if (!prefs.haptics || typeof navigator.vibrate !== 'function') return; try { navigator.vibrate(Array.isArray(p) ? p : Math.min(40, p)); } catch (_) {} };
+  const HAPTIC = { arm: 8, right: [12, 30, 18], left: [18], up: [8, 30, 8], down: [10], tap3: [12, 30, 18], cleared: [30, 40, 30, 40, 60] };
+  // Sound: one shared WebAudio context, created/unlocked on the first tap after Sound is turned on. Everything is
+  // synthesized here (no audio files): swish = filtered noise ~120 ms, thunk = short pitched-down sine, chime = 3 rising notes.
+  const sfx = (() => {
+    let ctx = null, master = null, noise = null;
+    const VOL = 0.18;
+    function ensure() {
+      if (!prefs.sound) return null;
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null;
+      try {
+        if (!ctx) { ctx = new AC(); master = ctx.createGain(); master.gain.value = VOL; master.connect(ctx.destination); }
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      } catch (_) { return null; }
+      return ctx;
+    }
+    function noiseBuf() {
+      if (noise) return noise;
+      const n = Math.floor(ctx.sampleRate * 0.2); noise = ctx.createBuffer(1, n, ctx.sampleRate);
+      const d = noise.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+      return noise;
+    }
+    function env(g, t, peak, a, dur) { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); }
+    function tone(freq, t, dur, peak, type = 'sine', to) {
+      const o = ctx.createOscillator(), g = ctx.createGain(); o.type = type; o.frequency.setValueAtTime(freq, t);
+      if (to) o.frequency.exponentialRampToValueAtTime(to, t + dur);
+      env(g, t, peak, 0.006, dur); o.connect(g).connect(master); o.start(t); o.stop(t + dur + 0.02);
+    }
+    const SW = { right: [1800, 4200], left: [2600, 900], up: [1400, 5200], down: [2200, 700], tap3: [1600, 3200] };
+    return {
+      unlock() { ensure(); },
+      swish(dir) {
+        if (!ensure()) return; const t = ctx.currentTime, [f0, f1] = SW[dir] || SW.right;
+        const src = ctx.createBufferSource(); src.buffer = noiseBuf();
+        const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2; bp.frequency.setValueAtTime(f0, t); bp.frequency.exponentialRampToValueAtTime(f1, t + 0.12);
+        const g = ctx.createGain(); env(g, t, 0.5, 0.02, 0.12); src.connect(bp).connect(g).connect(master); src.start(t); src.stop(t + 0.14);
+      },
+      thunk(dir) {
+        if (!ensure()) return; const t = ctx.currentTime + 0.02;
+        const f = { right: 330, left: 196, up: 262, down: 220, tap3: 294 }[dir] || 262;
+        tone(f, t, 0.09, 0.6, 'sine', f * 0.6); tone(f * 2, t, 0.04, 0.12, 'triangle');
+      },
+      chime() { if (!ensure()) return; const t = ctx.currentTime + 0.02; [523.25, 659.25, 783.99].forEach((f, i) => tone(f, t + i * 0.11, 0.32, 0.35, 'sine')); },
+    };
+  })();
+  window.addEventListener('pointerdown', () => { if (prefs.sound) sfx.unlock(); }, { passive: true, capture: true });
 
   const MAX_PHOTOS = 6, MAX_EDGE = 1600, PHOTO_QUALITY = 0.85, MAX_UPLOAD = 8 * 1024 * 1024;
   const dragReset = {}; // swipe-down-to-dismiss resets per sheet (filled in by sheetDrag below)
@@ -444,7 +494,7 @@
       h('span', { class: 'e' }, x.card.emoji || '•'),
       h('div', { class: 't' }, h('div', {}, x.card.title), h('small', {}, [x.card.source, x.pics ? `📷 ${x.pics}` : '', x.text ? `“${x.text}”` : ''].filter(Boolean).join(' · '))),
       h('span', { class: 'a', style: `--c:${COLORS[x.gesture]}` }, x.gesture === 'tap3' ? 'Replied' : x.label))));
-    if (celebrate) confetti();
+    if (celebrate) { confetti(); buzz(HAPTIC.cleared); sfx.chime(); }
   }
 
   // 401 from /api/*: full-screen "Sign in again" overlay (markup + CSS + form script come from GET /signin, the same
@@ -518,10 +568,10 @@
     const q = clamp(p), qr = Math.round(q * 100) / 100;
     if (last.card === undefined) last.card = topCardData(node) || null;
     const card = last.card;
-    const k = clamp((p - 0.12) / 0.6);
+    const k = clamp((p - 0.3) / 0.7); // stamp appears at 30% of the commit threshold and is full size at the threshold
     for (const d in fx.stamps) {
       const s = fx.stamps[d], on = d === dir;
-      const o = on ? r3(k) : 0, sc = on ? r3(1.35 - 0.35 * k) : 1;
+      const o = on ? r3(k) : 0, sc = on ? r3(0.6 + 0.4 * k) : 1;
       if ((s._o ?? 0) !== o) { s.style.opacity = o; s._o = o; }
       if ((s._s ?? 1) !== sc) { s.style.scale = sc; s._s = sc; } // individual 'scale' property: no inherited custom property, no subtree restyle
     }
@@ -547,17 +597,18 @@
     }
     // cards behind rise as the top card leaves (transform/opacity only)
     const rise = dir ? qr : 0;
-    if (last.rise !== rise) {
+    const par = dir && node._pos ? Math.round(clamp(node._pos.x / 12, -14, 14)) : 0; // parallax: back cards lean the other way
+    if (last.rise !== rise || last.par !== par) {
       for (const b of (fx.behind || (fx.behind = behindOf(node)))) {
         const depth = +b.dataset.depth; if (!depth) continue;
         const eff = depth - rise * 0.6;
         b.classList.toggle('dragging', q > 0);
-        b.style.transform = q > 0 ? `translate3d(0, ${r3(eff * 15)}px, 0) scale(${r3(1 - eff * 0.05)})` : '';
+        b.style.transform = q > 0 ? `translate3d(${r3(-par * Math.min(depth, 2) * 0.5)}px, ${r3(eff * 14)}px, 0) scale(${r3(1 - eff * 0.04)})` : '';
         if (depth === 3) b.style.opacity = q > 0 ? r3(q * 0.6) : '';
       }
-      last.rise = rise;
+      last.rise = rise; last.par = par;
     }
-    if (dir && p >= 1 && !node._armed) { node._armed = true; buzz(8); } else if (p < 1) node._armed = false;
+    if (dir && p >= 1 && !node._armed) { node._armed = true; buzz(HAPTIC.arm); } else if (p < 1) node._armed = false;
   }
   function clearFeedback(node) {
     setFeedback(node, null, 0);
@@ -668,8 +719,8 @@
   }
   // Damped spring solved exactly (frame-rate independent: identical at 60, 90 or 120 Hz). zeta ~0.83: snappy, tiny overshoot.
   const SPRING_K = 640, SPRING_C = 42;
-  function springAxis(x0, v0) {
-    const w0 = Math.sqrt(SPRING_K), z = SPRING_C / (2 * w0), wd = w0 * Math.sqrt(1 - z * z), B = (v0 + z * w0 * x0) / wd;
+  function springAxis(x0, v0, K = SPRING_K, C = SPRING_C) {
+    const w0 = Math.sqrt(K), z = C / (2 * w0), wd = w0 * Math.sqrt(1 - z * z), B = (v0 + z * w0 * x0) / wd;
     return (t) => { const e = Math.exp(-z * w0 * t), c = Math.cos(wd * t), s = Math.sin(wd * t); return [e * (x0 * c + B * s), e * ((B * wd - z * w0 * x0) * c - (x0 * wd + z * w0 * B) * s)]; };
   }
   function springBack(node, from, v) {
@@ -717,6 +768,8 @@
     node.classList.add('flying', 'dragging');
     node.style.pointerEvents = 'none';
     setFeedback(node, dir, 1.2);
+    sfx.swish(dir);
+    promoteSettle(dir);
     let x = from.x, y = from.y, r = from.rot;
     const W = window.innerWidth, H = window.innerHeight;
     const axisX = dir === 'right' || dir === 'left';
@@ -761,6 +814,17 @@
     afterFrame(() => commit(card, dir, opts.text, opts.photos)); // motion first, then record (optimistic; network syncs after)
   }
 
+  // The next card springs up (CSS transform transition) and settles a 4° tilt with a K=300/C=26 spring. Uses the
+  // independent 'rotate' property on the compositor so it never fights the depth transform.
+  function promoteSettle(dir) {
+    if (reduced()) return;
+    const next = el.stack.querySelector('.card[data-depth="1"]:not(.flying)'); if (!next || !next.animate) return;
+    const sign = dir === 'left' ? 1 : dir === 'right' ? -1 : (Math.random() < 0.5 ? -1 : 1);
+    const sp = springAxis(4 * sign, 0, 300, 26), kf = [];
+    for (let t = 0; t <= 0.9; t += 1 / 60) kf.push({ rotate: `${r3(sp(t)[0])}deg` });
+    kf.push({ rotate: '0deg' });
+    next.animate(kf, { duration: 900, easing: 'linear', delay: 60 });
+  }
   // programmatic swipe (buttons / keyboard / sheet quick answers)
   function swipe(dir, opts = {}) {
     const node = el.stack.querySelector('.card[data-depth="0"]:not(.flying)');
@@ -1107,7 +1171,7 @@
     const pics = photos.length ? ` · ${photos.length} photo${photos.length > 1 ? 's' : ''}` : '';
     const label = gesture === 'tap3' ? (card.builtin ? 'Thanks! Suggestion saved' : 'Reply saved') : card.builtin && gesture === 'right' ? 'Love it · thanks!' : g.label;
     toast(`${label}${card.builtin ? '' : ` · ${card.source}`}${pics}${gesture === 'up' ? ' · back tomorrow 6 AM' : ''}`, COLORS[gesture], 4000, { label: 'Undo', aria: `Undo answer to ${card.title}`, run: () => { if (state.history[state.history.length - 1] === entry) undo(); } });
-    buzz(gesture === 'right' ? [10, 40, 18] : gesture === 'left' ? 22 : 12); // distinct feel per answer
+    buzz(HAPTIC[gesture] || HAPTIC.right); sfx.thunk(gesture); // distinct feel per answer
     // Optimistic: the card is already gone on screen; the network catches up. If this card's undo is still syncing,
     // wait for it so the server sees undo -> new answer in order.
     const send = () => (photos.length ? sendAnswer(payload, photos) : api('/api/answers', { method: 'POST', body: JSON.stringify(payload) }));
@@ -1413,6 +1477,17 @@
     const t = b.dataset.themeOpt; try { localStorage.setItem(THEME_KEY, t); } catch (_) {} applyTheme(t);
   }));
   applyTheme(currentTheme());
+  for (const [k, id] of [['sound', 'soundToggle'], ['haptics', 'hapticsToggle'], ['reduceFx', 'reduceFxToggle']]) {
+    const box = document.getElementById(id); if (!box) continue;
+    box.checked = prefs[k];
+    box.addEventListener('change', () => {
+      prefs[k] = box.checked; try { localStorage.setItem(PREF[k], box.checked ? '1' : '0'); } catch (_) {}
+      if (k === 'sound' && box.checked) { sfx.unlock(); sfx.thunk('right'); }
+      if (k === 'haptics' && box.checked) buzz(HAPTIC.arm);
+      document.documentElement.classList.toggle('reduce-fx', prefs.reduceFx);
+    });
+  }
+  document.documentElement.classList.toggle('reduce-fx', prefs.reduceFx);
 
   const panels = {
     settings: $('#settingsWrap'), history: $('#historyWrap'), insights: $('#insightsWrap'), recap: $('#recapWrap'),
