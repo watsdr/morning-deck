@@ -387,7 +387,7 @@
       const hint = h('div', { class: `hint hint-${d}` }); hint.append(svgIcon(ICONS[d]), h('span', {}, g[d].label));
       node.append(hint);
       const label = g[d].label;
-      node.append(h('div', { class: `stamp stamp-${d}`, style: `--fs:${label.length > 11 ? 22 : label.length > 8 ? 26 : label.length > 5 ? 32 : 42}px` }, label));
+      node.append(h('div', { class: `stamp stamp-${d}`, style: `--fs:${label.length > 11 ? 22 : label.length > 8 ? 26 : label.length > 5 ? 32 : 42}px` }, h('span', { class: 'stamp-ico', 'aria-hidden': 'true' }), label));
     }
     node.append(h('div', { class: 'stamp stamp-tap3', style: '--fs:34px' }, card.builtin ? 'Thanks!' : 'Replied'));
     const P = { passive: true }; // nothing here calls preventDefault: touch-action:none on .card already owns the gesture

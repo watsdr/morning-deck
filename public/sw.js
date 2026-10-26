@@ -1,10 +1,11 @@
 /* Morning Deck service worker: cache the app shell, network-first for the API. */
-const VERSION = 'md-v18'; // bump on every app release so phones pick up the new shell
+const VERSION = 'md-v19'; // bump on every app release so phones pick up the new shell
 const cacheable = (res) => res.ok && res.status === 200 && res.type === 'basic' && !res.headers.get('X-MD-Lock');
 const SHELL_CACHE = `${VERSION}-shell`;
 const API_CACHE = `${VERSION}-api`;
 const SHELL = ['/', '/styles.css', '/app.js', '/manifest.webmanifest', '/fonts/jakarta.woff2',
-  '/icons/icon-192.png', '/icons/icon-512.png', '/icons/maskable-192.png', '/icons/maskable-512.png', '/icons/favicon-32.png'];
+  '/icons/icon-192.png', '/icons/icon-512.png', '/icons/maskable-192.png', '/icons/maskable-512.png', '/icons/favicon-32.png',
+  '/assets/noise.webp', '/assets/stamp-yes.svg', '/assets/stamp-no.svg', '/assets/stamp-later.svg', '/assets/stamp-handback.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL_CACHE).then((c) => Promise.all(SHELL.map((u) => fetch(u, { cache: 'no-cache' }).then((r) => cacheable(r) ? c.put(u, r) : null).catch(() => null)))).then(() => self.skipWaiting()));

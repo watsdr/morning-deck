@@ -187,8 +187,8 @@ html[data-theme="light"] {
   --card-contact: 0 2px 4px -1px rgba(60, 30, 90, .22);
 }
 /* subtle paper grain until Asset Smith's noise.webp tile lands: static overlay, opacity-only */
-.card::after { content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; opacity: .045;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E"); }
+.card::after { content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; opacity: .28;
+  background: url(assets/noise.webp) repeat; background-size: 128px 128px; mix-blend-mode: soft-light; }
 .card-ring { box-shadow: inset 0 0 0 3px var(--glow, transparent), inset 0 0 28px 2px var(--glow, transparent) !important; }
 html.reduce-fx .card, html.reduce-fx .card * { transition-duration: .01s !important; animation-duration: .01s !important; animation-iteration-count: 1 !important; }
 /* Own GPU layers for what moves: the top card (and its stamp/glow overlays, which fade with opacity only) and the two
@@ -304,6 +304,12 @@ html.reduce-fx .card, html.reduce-fx .card * { transition-duration: .01s !import
   text-shadow: 0 1px 0 rgba(255, 255, 255, .6);
   box-shadow: 0 8px 24px -8px currentColor;
 }
+.stamp-ico { display: inline-block; width: .8em; height: .8em; margin-right: .2em; vertical-align: -.08em; flex: none; background: currentColor;
+  -webkit-mask: var(--ico) center / contain no-repeat; mask: var(--ico) center / contain no-repeat; }
+.stamp-right .stamp-ico { --ico: url(assets/stamp-yes.svg); }
+.stamp-left .stamp-ico { --ico: url(assets/stamp-no.svg); }
+.stamp-up .stamp-ico { --ico: url(assets/stamp-later.svg); }
+.stamp-down .stamp-ico { --ico: url(assets/stamp-handback.svg); }
 .stamp-right { max-width: 74%; color: var(--right); top: 56px; left: 22px; rotate: -14deg; transform-origin: left center; }
 .stamp-left { max-width: 74%; color: var(--left); top: 56px; right: 22px; rotate: 14deg; transform-origin: right center; }
 .stamp-up { color: var(--up); bottom: 96px; left: 50%; translate: -50% 0; rotate: -6deg; }
