@@ -28,6 +28,8 @@ MD_TOKEN=$(sed -n 's/^MD_TOKEN=//p' /workspace/morning-deck/.env)
 `question`/`context` are aliases for `title`/`body`. Invalid cards return `400` with an `invalid` list; nothing in the batch is stored.
 You can post one card, an array, or `{ "cards": [...] }` (1-500).
 
+**Status codes:** `POST /api/cards` returns `201 Created` when at least one card in the request was newly added, and `200 OK` when every card was a dedupe duplicate (an `id` already in the deck), so nothing new was stored. The body is `{ "added": [...], "duplicates": [...] }` either way.
+
 ## Examples
 
 Trip Desk, due today, custom labels:

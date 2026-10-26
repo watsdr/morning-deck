@@ -49,6 +49,8 @@ fs.writeFileSync(path.join(OUT, 'styles.css'), fs.readFileSync(path.join(PUB, 's
 const man = JSON.parse(fs.readFileSync(path.join(PUB, 'manifest.webmanifest'), 'utf8'));
 Object.assign(man, { id: './', start_url: './?source=pwa', scope: './', name: 'Morning Deck (demo)' });
 man.shortcuts = (man.shortcuts || []).filter((sc) => !/(^|\/)(main-menu|hub-world)(\/|$)/.test(sc.url || '')); // static builds have neither folder
+man.shortcuts = man.shortcuts.map((sc) => ({ ...sc, url: (sc.url || '').replace(/^\//, './'),
+  icons: (sc.icons || []).map((i) => ({ ...i, src: i.src.replace(/^\//, '') })) }));
 man.icons = man.icons.map((i) => ({ ...i, src: i.src.replace(/^\//, '') }));
 fs.writeFileSync(path.join(OUT, 'manifest.webmanifest'), JSON.stringify(man, null, 2) + '\n');
 
