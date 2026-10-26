@@ -820,3 +820,51 @@ html[data-theme="light"] .app-tile { background: rgba(255, 255, 255, .7); border
 .card.card-due-today { outline: 2px solid #ffd666; outline-offset: -2px; }
 @media (prefers-reduced-motion: no-preference) { .card.card-overdue .due-line.due-over { animation: dueThrob 2.4s ease-in-out 2; } }
 @keyframes dueThrob { 50% { filter: brightness(1.18); } }
+
+/* ---------- AAA asset pack v1 (merged: tokens/motion that don't clash; transform/opacity motion only) ---------- */
+:root { --aaa-accent-2: #ff8c5a; --aaa-shadow-contact: 0 2px 4px -1px rgba(0, 0, 0, .35); }
+/* Backgrounds: Aurora under the dark sky, Paper under the light sky (the sun glow stays on top). */
+.sky { background:
+    radial-gradient(120% 60% at 50% 112%, rgba(255, 179, 122, .85) 0%, rgba(242, 119, 110, .55) 22%, rgba(160, 64, 150, 0) 60%),
+    url(/assets/bg/bg-aurora.webp) center / cover, #1d1442; }
+html[data-theme="light"] .sky { background:
+    radial-gradient(120% 60% at 50% 112%, rgba(255, 210, 168, .9) 0%, rgba(255, 176, 160, .45) 25%, rgba(255, 190, 200, 0) 60%),
+    url(/assets/bg/bg-paper.webp) center / cover, #f8efe6; }
+/* Pack icons (sprite, currentColor) */
+.pk-icon { width: 20px; height: 20px; fill: none; stroke: none; color: currentColor; display: block; }
+.panel-x { display: inline-grid; place-items: center; }
+/* Bot emblems on the source badge */
+.avatar.avatar-emblem { background: none; box-shadow: none; }
+.avatar.avatar-emblem img { width: 44px; height: 44px; display: block; pointer-events: none; }
+.sheet-bot .avatar.avatar-emblem img { width: 38px; height: 38px; }
+/* Cleared celebration: light rays + streak flame */
+.sunrise .fx-rays { position: absolute; left: 50%; bottom: -130px; width: 260px; height: 260px; margin-left: -130px; opacity: .75; pointer-events: none;
+  animation: fxRaysIn 1.6s var(--ease-out) both, md-ray-spin 30s linear infinite; }
+@keyframes fxRaysIn { from { opacity: 0; transform: translateY(90px); } }
+@keyframes md-ray-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.cleared-streak { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 10px; padding: 5px 12px 5px 8px; border-radius: 999px;
+  font-size: 13.5px; font-weight: 800; background: rgba(255, 140, 90, .16); border: 1px solid rgba(255, 140, 90, .35); animation: popIn .7s .4s var(--spring) both; }
+.cleared-streak[hidden] { display: none !important; }
+.fx-flame { width: 18px; height: 23px; transform-origin: 50% 100%; animation: md-flame .9s ease-in-out infinite; }
+@keyframes md-flame { 0%, 100% { transform: scaleY(1) translateY(0); } 50% { transform: scaleY(1.08) translateY(-1px); } }
+/* First-run tour: ghost hand demonstrates the current gesture */
+.tour-card { position: relative; }
+.tour-icon .tour-svg { width: 56px; height: 56px; }
+.tour-hand { position: absolute; left: 50%; top: 50%; width: 120px; height: 120px; margin: -60px 0 0 -60px; pointer-events: none; opacity: 0;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, .3)); animation: ghostR 2.2s ease-in-out .3s infinite; }
+.tour-card[data-g="left"] .tour-hand { animation-name: ghostL; }
+.tour-card[data-g="up"] .tour-hand { animation-name: ghostU; }
+.tour-card[data-g="down"] .tour-hand { animation-name: ghostD; }
+.tour-card[data-g="tap3"] .tour-hand { animation-name: ghostTap; }
+@keyframes ghostR { 0% { opacity: 0; transform: translateX(-30px); } 15% { opacity: 1; } 70% { opacity: 1; transform: translateX(70px); } 85%, 100% { opacity: 0; transform: translateX(80px); } }
+@keyframes ghostL { 0% { opacity: 0; transform: translateX(30px); } 15% { opacity: 1; } 70% { opacity: 1; transform: translateX(-70px); } 85%, 100% { opacity: 0; transform: translateX(-80px); } }
+@keyframes ghostU { 0% { opacity: 0; transform: translateY(30px); } 15% { opacity: 1; } 70% { opacity: 1; transform: translateY(-70px); } 85%, 100% { opacity: 0; transform: translateY(-80px); } }
+@keyframes ghostD { 0% { opacity: 0; transform: translateY(-30px); } 15% { opacity: 1; } 70% { opacity: 1; transform: translateY(70px); } 85%, 100% { opacity: 0; transform: translateY(80px); } }
+@keyframes ghostTap { 0%, 100% { opacity: 0; transform: scale(1); } 10% { opacity: 1; } 18%, 38%, 58% { transform: scale(.85); } 28%, 48%, 68% { transform: scale(1); } 80% { opacity: 1; } }
+/* Reduced motion / Reduce effects: everything still, hand shown as a static hint, rays still. */
+@media (prefers-reduced-motion: reduce) {
+  .sunrise .fx-rays, .fx-flame { animation: none !important; }
+  .tour-hand { animation: none !important; opacity: .85; }
+}
+html.reduce-fx .sunrise .fx-rays, html.reduce-fx .fx-flame { animation: none !important; }
+html.reduce-fx .tour-hand { animation: none !important; opacity: .85; }

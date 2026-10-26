@@ -1,11 +1,13 @@
 /* Morning Deck service worker: cache the app shell, network-first for the API. */
-const VERSION = 'md-v19'; // bump on every app release so phones pick up the new shell
+const VERSION = 'md-v20'; // bump on every app release so phones pick up the new shell
 const cacheable = (res) => res.ok && res.status === 200 && res.type === 'basic' && !res.headers.get('X-MD-Lock');
 const SHELL_CACHE = `${VERSION}-shell`;
 const API_CACHE = `${VERSION}-api`;
 const SHELL = ['/', '/styles.css', '/app.js', '/manifest.webmanifest', '/fonts/jakarta.woff2',
   '/icons/icon-192.png', '/icons/icon-512.png', '/icons/maskable-192.png', '/icons/maskable-512.png', '/icons/favicon-32.png',
-  '/assets/noise.webp', '/assets/stamp-yes.svg', '/assets/stamp-no.svg', '/assets/stamp-later.svg', '/assets/stamp-handback.svg'];
+  '/assets/noise.webp', '/assets/stamp-yes.svg', '/assets/stamp-no.svg', '/assets/stamp-later.svg', '/assets/stamp-handback.svg',
+  '/assets/icons.svg', '/assets/bg/bg-aurora.webp', '/assets/bg/bg-paper.webp', '/assets/fx/cleared-rays.svg', '/assets/fx/streak-flame.svg', '/assets/fx/ghost-hand.svg',
+  '/assets/emblems/emblem-chief.svg', '/assets/emblems/emblem-trip.svg', '/assets/emblems/emblem-money.svg', '/assets/emblems/emblem-code.svg', '/assets/emblems/emblem-mail.svg', '/assets/emblems/emblem-health.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL_CACHE).then((c) => Promise.all(SHELL.map((u) => fetch(u, { cache: 'no-cache' }).then((r) => cacheable(r) ? c.put(u, r) : null).catch(() => null)))).then(() => self.skipWaiting()));

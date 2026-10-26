@@ -55,10 +55,12 @@
       <section class="cleared" id="cleared" hidden>
         <div class="sunrise" aria-hidden="true">
           <div class="rays"></div>
+          <img class="fx-rays" src="/assets/fx/cleared-rays.svg" alt="" width="260" height="260">
           <div class="sun"></div>
           <div class="horizon"></div>
         </div>
         <h2>All caught up</h2>
+        <p class="cleared-streak" id="clearedStreak" hidden><img class="fx-flame" src="/assets/fx/streak-flame.svg" alt="" width="22" height="28"><span id="clearedStreakN"></span></p>
         <p class="cleared-sub" id="clearedSub">Nothing waiting on you right now.</p>
         <div class="summary-chips" id="summaryChips"></div>
         <ul class="summary-list" id="summaryList"></ul>
@@ -116,7 +118,7 @@
     <div class="panel-backdrop" data-close="settings"></div>
     <section class="panel" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div class="grabber" aria-hidden="true"></div>
-      <div class="panel-head"><h3 id="settingsTitle">Settings</h3><button type="button" class="panel-x" data-close="settings" aria-label="Close settings">✕</button></div>
+      <div class="panel-head"><h3 id="settingsTitle">Settings</h3><button type="button" class="panel-x" data-close="settings" aria-label="Close settings"><svg class="pk-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/assets/icons.svg#i-skip"/></svg></button></div>
       <div class="set-list">
         <button type="button" class="set-row" id="historyBtn">
           <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></span>
@@ -170,7 +172,7 @@
     <div class="panel-backdrop" data-close="history"></div>
     <section class="panel panel-tall" id="historyPanel" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
       <div class="grabber" aria-hidden="true"></div>
-      <div class="panel-head"><h3 id="historyTitle">History</h3><button type="button" class="panel-x" data-close="history" aria-label="Close history">✕</button></div>
+      <div class="panel-head"><h3 id="historyTitle">History</h3><button type="button" class="panel-x" data-close="history" aria-label="Close history"><svg class="pk-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/assets/icons.svg#i-skip"/></svg></button></div>
       <p class="panel-sub" id="historySub">Loading…</p>
       <ol class="hist-list" id="historyList"></ol>
     </section>
@@ -180,7 +182,7 @@
     <div class="panel-backdrop" data-close="recap"></div>
     <section class="panel panel-tall" id="recapPanel" role="dialog" aria-modal="true" aria-labelledby="recapTitle">
       <div class="grabber" aria-hidden="true"></div>
-      <div class="panel-head"><h3 id="recapTitle">This week</h3><button type="button" class="panel-x" data-close="recap" aria-label="Close weekly recap">✕</button></div>
+      <div class="panel-head"><h3 id="recapTitle">This week</h3><button type="button" class="panel-x" data-close="recap" aria-label="Close weekly recap"><svg class="pk-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/assets/icons.svg#i-skip"/></svg></button></div>
       <div class="ins-scroll" id="recapBody"><p class="panel-sub">Loading…</p></div>
     </section>
   </div>
@@ -188,7 +190,7 @@
     <div class="panel-backdrop" data-close="insights"></div>
     <section class="panel panel-tall" id="insightsPanel" role="dialog" aria-modal="true" aria-labelledby="insightsTitle">
       <div class="grabber" aria-hidden="true"></div>
-      <div class="panel-head"><h3 id="insightsTitle">Insights</h3><button type="button" class="panel-x" data-close="insights" aria-label="Close insights">✕</button></div>
+      <div class="panel-head"><h3 id="insightsTitle">Insights</h3><button type="button" class="panel-x" data-close="insights" aria-label="Close insights"><svg class="pk-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/assets/icons.svg#i-skip"/></svg></button></div>
       <div class="ins-scroll" id="insightsBody"><p class="panel-sub">Loading…</p></div>
     </section>
   </div>

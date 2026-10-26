@@ -342,6 +342,17 @@
   }
 
   // ---------- card DOM ----------
+  // Bot emblems (asset pack): matched by bot name; anything unmatched keeps the emoji avatar.
+  const EMBLEMS = [['chief', /chief|staff/i], ['trip', /trip|travel|flight/i], ['money', /money|billing|financ|budget|expense|bank/i],
+    ['code', /code|dev|github|build/i], ['mail', /mail|inbox|email/i], ['health', /health|fitness|meal|doctor/i]];
+  const emblemFor = (source) => { const m = EMBLEMS.find(([, re]) => re.test(source || '')); return m ? `/assets/emblems/emblem-${m[0]}.svg` : null; };
+  const avatarFor = (card) => {
+    const src = !card.builtin && emblemFor(card.source);
+    return src ? h('div', { class: 'avatar avatar-emblem' }, h('img', { src, alt: '', width: '40', height: '40', decoding: 'async', draggable: 'false' }))
+      : h('div', { class: 'avatar' }, card.emoji || '🤖');
+  };
+  const icon = (name, cls = 'pk-icon') => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('class', cls); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true');
+    const u = document.createElementNS('http://www.w3.org/2000/svg', 'use'); u.setAttribute('href', `/assets/icons.svg#i-${name}`); s.append(u); return s; };
   function buildCard(card) {
     if (card.divider) return buildDivider(card);
     const g = card.gestures;
@@ -351,7 +362,7 @@
     node.append(h('div', { class: 'card-wash' }), h('div', { class: 'card-ring' }));
     if (card.sample) node.append(h('div', { class: 'ribbon', title: 'Example data, not a real request' }, 'SAMPLE'));
     node.append(h('header', { class: 'card-head' },
-      h('div', { class: 'avatar' }, card.emoji || '🤖'),
+      avatarFor(card),
       h('div', { class: 'who' }, h('div', { class: 'bot' }, card.source), h('div', { class: 'meta' }, card.builtin ? 'Your daily check-in · last card' : fmtTime(card.createdAt) + (card.sample ? ' · sample' : '')))));
     node.append(card.builtin
       ? h('div', { class: 'chips' }, h('span', { class: 'chip' }, 'Feedback'), h('span', { class: 'chip chip-soft' }, '1 minute'))
@@ -495,6 +506,15 @@
       h('div', { class: 't' }, h('div', {}, x.card.title), h('small', {}, [x.card.source, x.pics ? `📷 ${x.pics}` : '', x.text ? `“${x.text}”` : ''].filter(Boolean).join(' · '))),
       h('span', { class: 'a', style: `--c:${COLORS[x.gesture]}` }, x.gesture === 'tap3' ? 'Replied' : x.label))));
     if (celebrate) { confetti(); buzz(HAPTIC.cleared); sfx.chime(); }
+    showStreak();
+  }
+  // Streak flame on the cleared screen: read-only GET of the insights summary; hidden unless the streak is 1+ days.
+  function showStreak() {
+    const box = $('#clearedStreak'); if (!box) return;
+    const paint = (d) => { const n = d && d.summary && d.summary.clearedStreak; box.hidden = !(n > 0); if (n > 0) $('#clearedStreakN').textContent = `${n}-day streak`; };
+    if (config.demo) { box.hidden = true; return; }
+    paint(state.insights);
+    api('/api/insights').then((d) => { state.insights = d; if (!el.cleared.hidden) paint(d); }).catch(() => {});
   }
 
   // 401 from /api/*: full-screen "Sign in again" overlay (markup + CSS + form script come from GET /signin, the same
@@ -892,7 +912,8 @@
     if (!card) return;
     state.sheetCard = card; state.sheetOpenedAt = performance.now();
     const bot = $('#sheetBot'); bot.innerHTML = '';
-    bot.append(h('div', { class: 'avatar', style: `--accent:${card.color || '#7c6cf2'}` }, card.emoji || '🤖'),
+    const av = avatarFor(card); av.style.setProperty('--accent', card.color || '#7c6cf2');
+    bot.append(av,
       h('div', {}, card.source, h('small', {}, card.builtin ? 'Built into Morning Deck' : fmtTime(card.createdAt) + (card.sample ? ' · SAMPLE data' : ''))));
     { const meta = $('#sheetMeta'); meta.innerHTML = ''; const du = dueInfo(card);
       if (du) meta.append(h('div', { class: `due-line sheet-due ${du.cls}` }, h('span', { class: 'due-ico', 'aria-hidden': 'true' }, '⏰'), du.text));
@@ -1710,11 +1731,11 @@
   // Local only: it never calls the API, never touches state.deck and never records an answer.
   const TOUR_KEY = 'md_tour_done';
   const TOUR_STEPS = [
-    { g: 'right', icon: '→', title: 'Swipe right', say: 'Right means yes / the main choice.' },
-    { g: 'left', icon: '←', title: 'Swipe left', say: 'Left means no / the other choice.' },
-    { g: 'up', icon: '↑', title: 'Swipe up', say: 'Up means later: the card comes back.' },
-    { g: 'down', icon: '↓', title: 'Swipe down', say: 'Down means skip.' },
-    { g: 'tap3', icon: '•••', title: 'Triple-tap', say: 'Tap three times quickly to see details or type a reply.' },
+    { g: 'right', icon: 'keep', title: 'Swipe right', say: 'Right means yes / the main choice.' },
+    { g: 'left', icon: 'skip', title: 'Swipe left', say: 'Left means no / the other choice.' },
+    { g: 'up', icon: 'later', title: 'Swipe up', say: 'Up means later: the card comes back.' },
+    { g: 'down', icon: 'moved', title: 'Swipe down', say: 'Down means skip.' },
+    { g: 'tap3', icon: 'details', title: 'Triple-tap', say: 'Tap three times quickly to see details or type a reply.' },
   ];
   const tour = { open: false };
   function tourDone() { try { return localStorage.getItem(TOUR_KEY) === '1'; } catch (_) { return true; } }
@@ -1731,6 +1752,7 @@
     const card = h('div', { class: 'tour-card', role: 'group', 'aria-label': 'Practice card' },
       h('div', { class: 'tour-badge' }, 'PRACTICE \u00b7 not saved'),
       h('div', { class: 'tour-icon', 'aria-hidden': 'true' }),
+      h('img', { class: 'tour-hand', src: '/assets/fx/ghost-hand.svg', alt: '', width: '120', height: '120', draggable: 'false' }),
       h('h3', { class: 'tour-title' }),
       h('p', { class: 'tour-say' }),
       h('p', { class: 'tour-note' }, 'This is a practice card. Nothing you do here is recorded or sent.'));
@@ -1745,7 +1767,7 @@
     const show = () => {
       const s = TOUR_STEPS[tour.step];
       card.dataset.g = s.g; card.style.setProperty('--tc', COLORS[s.g]);
-      card.querySelector('.tour-icon').textContent = s.icon;
+      card.querySelector('.tour-icon').replaceChildren(icon(s.icon, 'pk-icon tour-svg'));
       card.querySelector('.tour-title').textContent = `${tour.step + 1}/5 \u00b7 ${s.title}`;
       card.querySelector('.tour-say').textContent = s.say;
       wrap.dataset.step = s.g;
