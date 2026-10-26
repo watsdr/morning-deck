@@ -390,7 +390,7 @@
         ...((a) => (a ? [h('span', { class: `chip ${a.cls}` }, a.text)] : []))(ageChip(card)),
         card.stale ? h('span', { class: 'chip chip-relevant', title: 'Pending 7+ days' }, 'Still relevant?') : null));
     { const du = dueInfo(card); if (du) node.append(h('div', { class: `due-line ${du.cls}` }, h('span', { class: 'due-ico', 'aria-hidden': 'true' }, '⏰'), du.text)); }
-    node.append(h('h2', {}, card.title));
+    node.append(h('h2', { class: card.title.length > 110 ? 'title-xl' : card.title.length > 64 ? 'title-long' : null }, card.title));
     if (card.body) node.append(h('p', { class: 'body' }, card.body));
     if (card.type === 'choice') {
       const ul = h('ul', { class: 'options' });

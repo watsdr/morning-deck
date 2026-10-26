@@ -13,7 +13,7 @@
   --tap3: #38b6ff;
   --ink: #1d1832;
   --ink-2: #4b4566;
-  --ink-3: #8a84a3;
+  --ink-3: #6b6585; /* AAA polish: was #8a84a3 (3.5:1 on the card); now >= 5:1 */
   --card: #fffdfb;
   --spring: cubic-bezier(.2, 1.35, .35, 1);
   --ease-out: cubic-bezier(.16, 1, .3, 1);
@@ -894,3 +894,70 @@ html.reduce-fx .tour-hand { animation: none !important; opacity: .85; }
 .fx-flame { width: 22px; height: 22px; }
 @media (prefers-reduced-motion: reduce) { .sunrise .fx-burst { display: none !important; } }
 html.reduce-fx .sunrise .fx-burst { display: none !important; }
+
+/* ---------- AAA phone polish (2026-10-26) ---------- */
+/* Typography: long questions clamp instead of pushing the body and hints off the card */
+.card h2 { flex: none; overflow-wrap: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; }
+.card h2.title-long { font-size: 21px; line-height: 1.22; -webkit-line-clamp: 5; }
+.card h2.title-xl { font-size: 19px; line-height: 1.25; -webkit-line-clamp: 6; }
+.card h2.title-long ~ .body, .card h2.title-xl ~ .body { -webkit-line-clamp: 3; font-size: 15px; }
+@media (max-width: 380px) {
+  .card { padding-left: 20px; padding-right: 20px; }
+  .card h2 { font-size: 23px; }
+  .card h2.title-long { font-size: 19.5px; }
+  .card h2.title-xl { font-size: 18px; }
+  .brand h1 { font-size: 18px; }
+  .app-tiles { gap: 6px; padding-left: 16px; padding-right: 16px; }
+  .app-tile { padding: 6px 8px; font-size: 12.5px; gap: 4px; }
+  .app-tile-ico { font-size: 14px; }
+  .topbar { padding-left: 16px; padding-right: 16px; }
+}
+@media (max-height: 700px) { .card h2.title-long, .card h2.title-xl { font-size: 18px; -webkit-line-clamp: 4; } }
+.brand h1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.15; }
+.brand p { line-height: 1.3; }
+.meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { line-height: 1.2; }
+/* Gesture labels: stay legible on any card colour and never spill off the card */
+.stamp { overflow-wrap: break-word; text-wrap: balance; }
+.hint { opacity: .9; font-size: 12px; }
+.hint.active { text-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+/* Tap targets >= 44px (WCAG 2.5.5 / platform HIG) */
+.icon-btn { position: relative; }
+.icon-btn::before, .act-undo::before, .act-tap3::before { content: ''; position: absolute; inset: -3px; border-radius: inherit; } /* 46px hit area, same visual size so the title keeps its room */
+.panel-x { width: 44px; height: 44px; display: grid; place-items: center; flex: none; }
+.app-tile { min-height: 44px; }
+.qbtn { min-height: 44px; }
+#readAloudBtn, #voiceAnswerBtn { min-height: 44px; }
+.toast-act { min-height: 36px; position: relative; }
+.toast-act::before, .install-btn::before, .switch::before { content: ''; position: absolute; inset: -8px -4px; }
+.install-btn { position: relative; }
+.switch::before { inset: -8px -2px; border-radius: 999px; }
+/* Contrast (WCAG AA) */
+.act span { color: rgba(255, 255, 255, .94); font-size: 11px; text-shadow: 0 1px 3px rgba(10, 4, 40, .55); }
+html[data-theme="light"] .act span { color: var(--ink-2); text-shadow: 0 1px 2px rgba(255, 255, 255, .7); }
+.safety { color: rgba(255, 255, 255, .8); }
+.brand p { color: rgba(255, 255, 255, .8); }
+html[data-theme="light"] .panel { --p-ink-3: rgba(36, 18, 63, .68); }
+.panel { --p-ink-3: rgba(255, 255, 255, .62); }
+.tap-hint { color: var(--ink-2); }
+/* Focus: a visible ring for keyboard / switch users, never on touch */
+:where(button, a, [role="button"], input, textarea, .ins-row):focus-visible { outline: 3px solid #38b6ff; outline-offset: 2px; }
+.switch:focus-visible { outline-offset: 3px; }
+.act:focus-visible { outline-offset: 3px; }
+/* Consistent radii */
+.icon-btn, .app-tile, .panel-x { border-radius: 14px; }
+/* Safe areas: keep header and sides clear of notches / rounded corners */
+.app { padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+/* Reduce effects / reduced motion: sheets and panels fade instead of sliding; no blur cost */
+html.reduce-fx .panel, html.reduce-fx .sheet, html.reduce-fx .install-sheet, html.reduce-fx .panel-backdrop, html.reduce-fx .sheet-backdrop,
+html.reduce-fx .toast, html.reduce-fx .tour-wrap, html.reduce-fx .cleared, html.reduce-fx .cleared * { animation-duration: .01s !important; transition-duration: .01s !important; }
+html.reduce-fx .tour-wrap { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(12, 8, 30, .9); }
+html.reduce-fx .blob, html.reduce-fx .stars { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { .tour-wrap { -webkit-backdrop-filter: none; backdrop-filter: none; } }
+/* 360px phones: the brand keeps its full name; the logo yields first when the install pill takes room */
+@media (max-width: 380px) {
+  .topbar { gap: 6px; }
+  .brand h1 { font-size: 17.5px; }
+  .counter { min-width: 46px; padding: 0 8px; }
+  .topbar:has(.install-btn:not([hidden])) .logo { display: none; }
+}
