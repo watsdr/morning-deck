@@ -50,20 +50,37 @@
       env(g, t, peak, 0.006, dur); o.connect(g).connect(master); o.start(t); o.stop(t + dur + 0.02);
     }
     const SW = { right: [1800, 4200], left: [2600, 900], up: [1400, 5200], down: [2200, 700], tap3: [1600, 3200] };
+    // Sound Smith pack (morning-deck-v1): 15 Ogg Opus cues, fetched + decoded once after Sound is on and the first tap
+    // unlocks audio. Until a cue is decoded (or if the browser can't decode Opus) the synth sounds below play instead.
+    const CUES = ['arm_tick', 'swish_right', 'swish_left', 'swish_up', 'swish_down', 'confirm_soft', 'dismiss_soft', 'sheet_open',
+      'card_reveal', 'deck_complete', 'error_soft', 'app_open', 'remove_tick', 'tour_nudge', 'tour_ok'];
+    const bufs = {}; let loading = false;
+    function load() {
+      if (loading || !ctx) return; loading = true;
+      for (const n of CUES) fetch(`/assets/sfx/${n}.ogg`).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()))
+        .then((a) => new Promise((ok, no) => ctx.decodeAudioData(a, ok, no))).then((b) => { bufs[n] = b; }).catch(() => {});
+    }
+    function cue(name) { // true if the pack cue played; false -> caller falls back to synth
+      if (!ensure()) return true; // sound off: nothing should play at all
+      const b = bufs[name]; if (!b) return false;
+      try { const src = ctx.createBufferSource(); src.buffer = b; const g = ctx.createGain(); g.gain.value = 1 / VOL * 0.5; src.connect(g).connect(master); src.start(); return true; } catch (_) { return false; }
+    }
+    const THUNK = { right: 'confirm_soft', tap3: 'confirm_soft', left: 'dismiss_soft', up: 'remove_tick', down: 'remove_tick' };
     return {
-      unlock() { ensure(); },
+      unlock() { if (ensure()) load(); },
+      cue(name) { cue(name); }, // pack-only cues (no synth equivalent)
       swish(dir) {
-        if (!ensure()) return; const t = ctx.currentTime, [f0, f1] = SW[dir] || SW.right;
+        if (cue(`swish_${dir === 'tap3' ? 'up' : dir}`)) return; const t = ctx.currentTime, [f0, f1] = SW[dir] || SW.right;
         const src = ctx.createBufferSource(); src.buffer = noiseBuf();
         const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2; bp.frequency.setValueAtTime(f0, t); bp.frequency.exponentialRampToValueAtTime(f1, t + 0.12);
         const g = ctx.createGain(); env(g, t, 0.5, 0.02, 0.12); src.connect(bp).connect(g).connect(master); src.start(t); src.stop(t + 0.14);
       },
       thunk(dir) {
-        if (!ensure()) return; const t = ctx.currentTime + 0.02;
+        if (cue(THUNK[dir] || 'confirm_soft')) return; const t = ctx.currentTime + 0.02;
         const f = { right: 330, left: 196, up: 262, down: 220, tap3: 294 }[dir] || 262;
         tone(f, t, 0.09, 0.6, 'sine', f * 0.6); tone(f * 2, t, 0.04, 0.12, 'triangle');
       },
-      chime() { if (!ensure()) return; const t = ctx.currentTime + 0.02; [523.25, 659.25, 783.99].forEach((f, i) => tone(f, t + i * 0.11, 0.32, 0.35, 'sine')); },
+      chime() { if (cue('deck_complete')) return; const t = ctx.currentTime + 0.02; [523.25, 659.25, 783.99].forEach((f, i) => tone(f, t + i * 0.11, 0.32, 0.35, 'sine')); },
     };
   })();
   window.addEventListener('pointerdown', () => { if (prefs.sound) sfx.unlock(); }, { passive: true, capture: true });
@@ -629,7 +646,7 @@
       }
       last.rise = rise; last.par = par;
     }
-    if (dir && p >= 1 && !node._armed) { node._armed = true; buzz(HAPTIC.arm); stampSquash(fxOf(node).stamps[dir]); } else if (p < 1) node._armed = false;
+    if (dir && p >= 1 && !node._armed) { node._armed = true; buzz(HAPTIC.arm); sfx.cue('arm_tick'); stampSquash(fxOf(node).stamps[dir]); } else if (p < 1) node._armed = false;
   }
   function clearFeedback(node) {
     setFeedback(node, null, 0);
@@ -914,6 +931,7 @@
   // ---------- sheet ----------
   // mode = which gesture Save records: 'tap3' (custom reply) or a direction flagged `reply` (e.g. "Something's off").
   function openSheet(card, { gesture = 'tap3', text = '', photos = [] } = {}) {
+    sfx.cue('sheet_open');
     if (card && card.divider) return openFold();
     if (!card) return;
     state.sheetCard = card; state.sheetOpenedAt = performance.now();
@@ -1789,8 +1807,8 @@
     };
     const advance = (g) => {
       const s = TOUR_STEPS[tour.step];
-      if (g !== s.g) { live.textContent = `That was ${g === 'tap3' ? 'a triple-tap' : 'a swipe ' + g}. Try: ${s.title.toLowerCase()}.`; buzz(8); card.style.transition = 'transform .22s cubic-bezier(.16,1,.3,1)'; card.style.transform = ''; card.classList.remove('tour-shake'); void card.offsetWidth; card.classList.add('tour-shake'); return; }
-      buzz(15); live.textContent = `${s.title}: got it.`;
+      if (g !== s.g) { live.textContent = `That was ${g === 'tap3' ? 'a triple-tap' : 'a swipe ' + g}. Try: ${s.title.toLowerCase()}.`; buzz(8); sfx.cue('tour_nudge'); card.style.transition = 'transform .22s cubic-bezier(.16,1,.3,1)'; card.style.transform = ''; card.classList.remove('tour-shake'); void card.offsetWidth; card.classList.add('tour-shake'); return; }
+      buzz(15); sfx.cue('tour_ok'); live.textContent = `${s.title}: got it.`;
       const off = { right: [1, 0], left: [-1, 0], up: [0, -1], down: [0, 1], tap3: [0, 0] }[g];
       card.style.transition = reduced() ? 'opacity .15s' : 'transform .26s cubic-bezier(.16,1,.3,1), opacity .26s';
       if (!reduced()) card.style.transform = g === 'tap3' ? 'scale(1.06)' : `translate3d(${off[0] * 420}px, ${off[1] * 700}px, 0) rotate(${off[0] * 14}deg)`;

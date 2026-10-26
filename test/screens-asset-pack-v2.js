@@ -56,6 +56,15 @@ const api = async (p, o = {}) => (await fetch(BASE + p, { ...o, headers: { Autho
   check(await page.evaluate(() => document.documentElement.classList.contains('reduce-fx')), 'reduce-fx class set');
   check(await page.$eval('#fxBurst', (b) => b.hidden || getComputedStyle(b).display === 'none'), 'burst hidden under Reduce effects');
   await shot('reduce-effects-on.png');
+  // Sound Smith pack: all 15 cues served and decodable (sound itself stays off by default)
+  const snd = await page.evaluate(async () => {
+    const names = ['arm_tick', 'swish_right', 'swish_left', 'swish_up', 'swish_down', 'confirm_soft', 'dismiss_soft', 'sheet_open', 'card_reveal', 'deck_complete', 'error_soft', 'app_open', 'remove_tick', 'tour_nudge', 'tour_ok'];
+    const ac = new OfflineAudioContext(1, 48000, 48000); let ok = 0;
+    for (const n of names) { try { const r = await fetch(`/assets/sfx/${n}.ogg`); await ac.decodeAudioData(await r.arrayBuffer()); ok++; } catch (_) {} }
+    return { ok, soundDefault: localStorage.getItem('md_sound') };
+  });
+  check(snd.ok === 15, `sound cues decodable: ${snd.ok}/15`);
+  check(snd.soundDefault === null, 'Sound pref untouched (off by default)');
   console.log('page errors:', errs.length ? errs : 'none');
   await browser.close();
   if (fails || errs.length) process.exit(1);
