@@ -7,3 +7,8 @@ bin/
 screenshots/
 .env.old
 *.key
+*.apk
+*.crt
+*.bak-*
+gj*test*.cjs
+gjpeek.cjs
