@@ -36,6 +36,32 @@ Config is in `.env` (created by `scripts/init-env.sh`, mode 600, git-ignored):
 Quick-tunnel URLs change every time the tunnel restarts; run `scripts/phone-url.sh --tunnel` to get the new link.
 The Tailscale Funnel URL never changes (see below).
 
+## Testing
+
+Needs `npm install` and a `.env` from `scripts/init-env.sh` (`isolated.js` reads `MD_PORT`; the suites read `MD_TOKEN`). Playwright suites use system Chrome at `/usr/bin/google-chrome`.
+
+**`npm test`** runs `node test/run-all.js`. That starts each suite below on its own throwaway server (a temp `MD_DATA_DIR`, never `data/` or the live port). The list is the `SUITES` array in `test/run-all.js`. There is no list flag; passing no file to `isolated.js` only prints `usage: node test/isolated.js <test.js> [--empty] [--port N]` and exits 2.
+
+| Suite | Extra args |
+|---|---|
+| `test/pass1.js` | `--empty` |
+| `test/device-approval.js` | `--empty` |
+| `test/qr-pairing.js` | `--empty` |
+| `test/backups.js` | `--empty` |
+| `test/offline-sync.js` | none |
+
+It starts at port `8799`, or at `MD_TEST_PORT` when that is set. When that port is busy and still below `8809`, it prints `port <n> busy, trying <n+1>` and tries the next one. If it is still busy at `8809` or above, it exits 2 with `no free test port 8799-8809`.
+
+**One suite:**
+
+```bash
+node test/isolated.js <suite> --port <free port>
+```
+
+A suite is the test file (the argument that ends in `.js`), for example `test/pass1.js`. `isolated.js` seeds the SAMPLE deck, or an empty deck when you also pass `--empty`, starts `server.js` on `--port` (default `8799`), and runs the file with `MD_BASE`, `MD_DATA_DIR`, `MD_PORT`, and `MD_DIAG_LOG` set. The port must be free and must not be the live `MD_PORT` from `.env` (`8787` when that line is missing). The runner exits 2 with `refusing to use the live port <port>` so it never binds the server you actually use, and the data dir is a new temp directory (`md-test-…`), not `data/`. It stops the server when the test exits and leaves that temp dir in place (`data kept in …`).
+
+**`test/skip-tour.js`** is a helper, not a suite. A browser suite calls `require("./skip-tour")` with a Playwright `Browser` or `BrowserContext`. It registers an init script that sets `localStorage.md_tour_done` to `'1'` before any page script runs. Use it when the suite drives the deck: on fresh data the first-run tour starts about half a second after load and moves focus to `.tour-skip`. Do not use it in `test/tour.js`, which covers that tour on fresh data. Passing a `Browser` wraps `newContext` so later contexts get the script; passing a `BrowserContext` calls `addInitScript` on that context.
+
 ## Tailscale Funnel (permanent URL)
 
 Public URL: **https://morning-deck.tail164b96.ts.net** (Funnel on port 443 → `http://127.0.0.1:8787`, Let's Encrypt cert managed by tailscaled).
