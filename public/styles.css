@@ -873,9 +873,9 @@ html.reduce-fx .tour-hand { animation: none !important; opacity: .85; }
 /* Lit card: key light from top-left + edge ambient occlusion + rim, as static overlays on the existing light material
    (pack's dark card-lit.svg body would fight the light card, so only its lighting layers are adopted). */
 .card-lit { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; z-index: -1; /* above the card background, below content (card is a stacking context) */
-  background: radial-gradient(100% 70% at 15% 0%, rgba(255, 255, 255, .5), transparent 55%),
-    radial-gradient(75% 75% at 50% 50%, transparent 72%, rgba(40, 20, 80, .10) 100%);
-  box-shadow: inset 0 1.5px 0 rgba(255, 255, 255, .9), inset 0 -1px 0 rgba(124, 108, 242, .14); }
+  background: url(assets/v2.1/card-lit-light.svg) center / 100% 100% no-repeat; }
+/* v2.1: transparent light overlay (warm key light, lilac AO, gradient rim) for the #fffdfb card in BOTH themes —
+   cards stay light in dark theme, so the pack's opaque card-lit-dark.svg body is intentionally not used. Static, no animation. */
 /* Direction glow: pack edge-glow image for the pending direction, opacity driven by --pull (0..1) on this element only */
 .card-edge { position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
   opacity: var(--pull, 0); background: center / 100% 100% no-repeat; }
