@@ -1,5 +1,5 @@
 /* Morning Deck service worker: cache the app shell, network-first for the API. */
-const VERSION = 'md-v24'; // bump on every app release so phones pick up the new shell
+const VERSION = 'md-v25'; // bump on every app release so phones pick up the new shell
 const cacheable = (res) => res.ok && res.status === 200 && res.type === 'basic' && !res.headers.get('X-MD-Lock');
 const SHELL_CACHE = `${VERSION}-shell`;
 const API_CACHE = `${VERSION}-api`;
@@ -9,7 +9,8 @@ const SHELL = ['/', '/styles.css', '/app.js', '/manifest.webmanifest', '/fonts/j
   '/assets/icons.svg', '/assets/bg/bg-aurora.webp', '/assets/bg/bg-paper.webp', '/assets/fx/cleared-rays.svg', '/assets/fx/streak-flame.svg', '/assets/fx/ghost-hand.svg',
   '/assets/emblems/emblem-chief.svg', '/assets/emblems/emblem-trip.svg', '/assets/emblems/emblem-money.svg', '/assets/emblems/emblem-code.svg', '/assets/emblems/emblem-mail.svg', '/assets/emblems/emblem-health.svg',
   '/assets/v2/aurora-depth.webp', '/assets/v2/confetti-burst.svg', '/assets/v2/streak-flame-v2.svg', '/assets/v2/edge-glow-right.svg', '/assets/v2/edge-glow-left.svg', '/assets/v2/edge-glow-up.svg', '/assets/v2/edge-glow-down.svg', '/assets/v2.1/card-lit-light.svg',
-  '/assets/sfx/arm_tick.ogg', '/assets/sfx/swish_right.ogg', '/assets/sfx/swish_left.ogg', '/assets/sfx/swish_up.ogg', '/assets/sfx/swish_down.ogg', '/assets/sfx/confirm_soft.ogg', '/assets/sfx/dismiss_soft.ogg', '/assets/sfx/sheet_open.ogg', '/assets/sfx/card_reveal.ogg', '/assets/sfx/deck_complete.ogg', '/assets/sfx/error_soft.ogg', '/assets/sfx/app_open.ogg', '/assets/sfx/remove_tick.ogg', '/assets/sfx/tour_nudge.ogg', '/assets/sfx/tour_ok.ogg'];
+  '/assets/sfx/arm_tick.ogg', '/assets/sfx/swish_right.ogg', '/assets/sfx/swish_left.ogg', '/assets/sfx/swish_up.ogg', '/assets/sfx/swish_down.ogg', '/assets/sfx/confirm_soft.ogg', '/assets/sfx/dismiss_soft.ogg', '/assets/sfx/sheet_open.ogg', '/assets/sfx/card_reveal.ogg', '/assets/sfx/deck_complete.ogg', '/assets/sfx/error_soft.ogg', '/assets/sfx/app_open.ogg', '/assets/sfx/remove_tick.ogg', '/assets/sfx/tour_nudge.ogg', '/assets/sfx/tour_ok.ogg',
+  '/assets/sfx/priority_urgent.ogg', '/assets/sfx/undo.ogg', '/assets/sfx/streak.ogg', '/assets/sfx/new_questions.ogg', '/assets/sfx/amb_morning_bed.ogg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL_CACHE).then((c) => Promise.all(SHELL.map((u) => fetch(u, { cache: 'no-cache' }).then((r) => cacheable(r) ? c.put(u, r) : null).catch(() => null)))).then(() => self.skipWaiting()));

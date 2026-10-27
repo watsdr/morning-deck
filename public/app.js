@@ -13,9 +13,9 @@
   };
   const TYPE_LABEL = { question: 'Question', choice: 'Choice', info: 'FYI' };
   // Feel prefs (Settings): haptics default on, sound default off, "Reduce effects" default off (OS reduced-motion also counts).
-  const PREF = { haptics: 'md_haptics', sound: 'md_sound', reduceFx: 'md_reduce_fx' };
+  const PREF = { haptics: 'md_haptics', sound: 'md_sound', reduceFx: 'md_reduce_fx', ambient: 'md_ambient' };
   const pref = (k, dflt) => { try { const v = localStorage.getItem(PREF[k]); return v === null ? dflt : v === '1'; } catch (_) { return dflt; } };
-  const prefs = { haptics: pref('haptics', true), sound: pref('sound', false), reduceFx: pref('reduceFx', false) };
+  const prefs = { haptics: pref('haptics', true), sound: pref('sound', false), reduceFx: pref('reduceFx', false), ambient: pref('ambient', false) }; // ambient bed: separate toggle, off by default, needs Sound on too
   const reduced = () => prefs.reduceFx || matchMedia('(prefers-reduced-motion: reduce)').matches;
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
@@ -53,13 +53,20 @@
     // Sound Smith pack (morning-deck-v1): 15 Ogg Opus cues, fetched + decoded once after Sound is on and the first tap
     // unlocks audio. Until a cue is decoded (or if the browser can't decode Opus) the synth sounds below play instead.
     const CUES = ['arm_tick', 'swish_right', 'swish_left', 'swish_up', 'swish_down', 'confirm_soft', 'dismiss_soft', 'sheet_open',
-      'card_reveal', 'deck_complete', 'error_soft', 'app_open', 'remove_tick', 'tour_nudge', 'tour_ok'];
-    const bufs = {}; let loading = false;
+      'card_reveal', 'deck_complete', 'error_soft', 'app_open', 'remove_tick', 'tour_nudge', 'tour_ok',
+      // morning-deck-v2 add-on cues (pack-only, no synth fallback); the ambient bed is fetched only when its toggle is on
+      'priority_urgent', 'undo', 'streak', 'new_questions'];
+    const bufs = {}, ready = {}; let loading = false;
+    function fetchCue(n) {
+      return (ready[n] = ready[n] || fetch(`/assets/sfx/${n}.ogg`).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()))
+        .then((a) => new Promise((ok, no) => ctx.decodeAudioData(a, ok, no))).then((b) => { bufs[n] = b; return b; }));
+    }
     function load() {
       if (loading || !ctx) return; loading = true;
-      for (const n of CUES) fetch(`/assets/sfx/${n}.ogg`).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()))
-        .then((a) => new Promise((ok, no) => ctx.decodeAudioData(a, ok, no))).then((b) => { bufs[n] = b; }).catch(() => {});
+      for (const n of CUES) fetchCue(n).catch(() => {});
     }
+    let bed = null; // { src, g } while the ambient bed plays
+    function stopBed() { if (!bed) return; try { bed.src.stop(); } catch (_) {} bed = null; }
     function cue(name) { // true if the pack cue played; false -> caller falls back to synth
       if (!ensure()) return true; // sound off: nothing should play at all
       const b = bufs[name]; if (!b) return false;
@@ -69,6 +76,16 @@
     return {
       unlock() { if (ensure()) load(); },
       cue(name) { cue(name); }, // pack-only cues (no synth equivalent)
+      cueWhenReady(name) { if (ensure()) fetchCue(name).then(() => cue(name)).catch(() => {}); }, // e.g. app_open on the very first tap
+      startBed() { // ambient loop at its mastered level (same gain as the other pack cues); never stacks
+        if (bed || !prefs.ambient || document.hidden || !ensure()) return;
+        fetchCue('amb_morning_bed').then((b) => {
+          if (bed || !prefs.ambient || !prefs.sound || document.hidden) return;
+          const src = ctx.createBufferSource(); src.buffer = b; src.loop = true; const g = ctx.createGain(); g.gain.value = 1 / VOL * 0.5;
+          src.connect(g).connect(master); src.start(); bed = { src, g };
+        }).catch(() => {});
+      },
+      stopBed,
       swish(dir) {
         if (cue(`swish_${dir === 'tap3' ? 'up' : dir}`)) return; const t = ctx.currentTime, [f0, f1] = SW[dir] || SW.right;
         const src = ctx.createBufferSource(); src.buffer = noiseBuf();
@@ -83,7 +100,14 @@
       chime() { if (cue('deck_complete')) return; const t = ctx.currentTime + 0.02; [523.25, 659.25, 783.99].forEach((f, i) => tone(f, t + i * 0.11, 0.32, 0.35, 'sine')); },
     };
   })();
-  window.addEventListener('pointerdown', () => { if (prefs.sound) sfx.unlock(); }, { passive: true, capture: true });
+  let firstTap = true;
+  window.addEventListener('pointerdown', () => {
+    if (!prefs.sound) return;
+    sfx.unlock();
+    if (firstTap) { firstTap = false; sfx.cueWhenReady('app_open'); } // only the first tap after open, only with Sound on
+    if (prefs.ambient && state.loaded) sfx.startBed(); // bed waits for a tap once the deck has rendered
+  }, { passive: true, capture: true });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) sfx.stopBed(); });
 
   const MAX_PHOTOS = 6, MAX_EDGE = 1600, PHOTO_QUALITY = 0.85, MAX_UPLOAD = 8 * 1024 * 1024;
   const dragReset = {}; // swipe-down-to-dismiss resets per sheet (filled in by sheetDrag below)
@@ -303,7 +327,10 @@
     try {
       const data = await api('/api/deck');
       const queued = new Set([...outbox(), ...(await idb.all()).map((it) => it.payload)].map((p) => p.cardId));
+      const had = new Set(state.deck.map((c) => c.id)), wasLoaded = state.loaded;
       state.deck = foldDeck(data.cards.filter((c) => !queued.has(c.id)));
+      // New questions arrived: a later refetch (e.g. back to the app with an empty deck) brought bot cards we didn't have.
+      if (!initial && wasLoaded && data.cards.some((c) => !c.builtin && !had.has(c.id) && !queued.has(c.id))) sfx.cue('new_questions');
       state.loaded = true;
       if (!state.session.length && !state.deck.length) loadTodaySummary();
       render({ deal: initial });
@@ -442,6 +469,13 @@
     const run = () => { idleRender = 0; if (drag || state.busy) return scheduleIdleRender(); render(); };
     idleRender = window.requestIdleCallback ? requestIdleCallback(run, { timeout: 700 }) : setTimeout(run, 250);
   }
+  // Urgent cue: once when a high-priority or overdue card becomes the top card (cards carry priority high|normal|low and dueAt).
+  let lastTopId = null;
+  function noteTop(card) {
+    const id = card && !card.divider ? card.id : null;
+    if (id === lastTopId) return; lastTopId = id;
+    if (id && (card.priority === 'high' || (dueInfo(card) || {}).cls === 'due-over')) setTimeout(() => { if (lastTopId === id) sfx.cue('priority_urgent'); }, 220);
+  }
   function render({ deal = false, lazy = false } = {}) {
     if (state.locked) return;
     const visible = state.deck.slice(0, 4);
@@ -465,6 +499,7 @@
       if (fresh && deal && !reduced()) setTimeout(apply, 90 * (visible.length - i)); else apply();
     });
     existing.forEach((n) => n.remove());
+    noteTop(state.deck[0]);
     const top = el.stack.querySelector('.card[data-depth="0"]:not(.flying)') || el.stack.querySelector(`.card[data-id="${CSS.escape(visible[0]?.id || '')}"]`);
     // labels on fallback buttons
     const g = state.deck[0]?.gestures;
@@ -528,7 +563,12 @@
   // Streak flame on the cleared screen: read-only GET of the insights summary; hidden unless the streak is 1+ days.
   function showStreak() {
     const box = $('#clearedStreak'); if (!box) return;
-    const paint = (d) => { const n = d && d.summary && d.summary.clearedStreak; box.hidden = !(n > 0); if (n > 0) $('#clearedStreakN').textContent = `${n}-day streak`; };
+    const paint = (d) => {
+      const n = d && d.summary && d.summary.clearedStreak; box.hidden = !(n > 0); if (n > 0) $('#clearedStreakN').textContent = `${n}-day streak`;
+      // Streak cue only when the pill goes up (remembered per phone), after the clear chime.
+      let last = 0; try { last = +localStorage.getItem('md_last_streak') || 0; } catch (_) {}
+      if (n > 0 && n !== last) { try { localStorage.setItem('md_last_streak', String(n)); } catch (_) {} if (n > last) setTimeout(() => sfx.cue('streak'), 900); }
+    };
     if (config.demo) { box.hidden = true; return; }
     paint(state.insights);
     api('/api/insights').then((d) => { state.insights = d; if (!el.cleared.hidden) paint(d); }).catch(() => {});
@@ -1227,7 +1267,7 @@
         if (e.status === 401) return;
         if (!photos.length) {
           if (transient(e)) { entry.queued = true; setOutbox([...outbox(), payload]); setStatus('Offline · answers will sync when you reconnect'); }
-          else toast(`Couldn't record: ${e.message}`, COLORS.left);
+          else { toast(`Couldn't record: ${e.message}`, COLORS.left); sfx.cue('error_soft'); }
           return;
         }
         if (transient(e)) {
@@ -1242,7 +1282,7 @@
           } catch (_) { /* no IndexedDB: fall through and give the reply back */ }
         }
         // Couldn't upload and couldn't queue: put the card back with the text + photos so nothing is lost.
-        toast(`Couldn't upload photos: ${e.message}. Your reply is back, try again.`, COLORS.left, 4200);
+        toast(`Couldn't upload photos: ${e.message}. Your reply is back, try again.`, COLORS.left, 4200); sfx.cue('error_soft');
         state.history = state.history.filter((x) => x !== entry); state.session = state.session.filter((x) => x !== entry);
         if (!state.deck.some((c) => c.id === card.id)) state.deck.unshift(card);
         el.cleared.hidden = true; el.app.classList.remove('is-cleared');
@@ -1281,7 +1321,7 @@
       place(node, from[0], from[1], from[2]); node.classList.add('dragging');
       springBack(node, { x: from[0], y: from[1], rot: from[2] }, { x: 0, y: 0 });
     }
-    toast(`Undone · ${entry.card.source}`, COLORS.undo);
+    toast(`Undone · ${entry.card.source}`, COLORS.undo); sfx.cue('undo');
     const sync = undoQueue = undoQueue.catch(() => {}).then(() => syncUndo(entry));
     syncChain.set(entry.card.id, sync);
     try { await sync; }
@@ -1529,12 +1569,14 @@
     const t = b.dataset.themeOpt; try { localStorage.setItem(THEME_KEY, t); } catch (_) {} applyTheme(t);
   }));
   applyTheme(currentTheme());
-  for (const [k, id] of [['sound', 'soundToggle'], ['haptics', 'hapticsToggle'], ['reduceFx', 'reduceFxToggle']]) {
+  for (const [k, id] of [['sound', 'soundToggle'], ['ambient', 'ambientToggle'], ['haptics', 'hapticsToggle'], ['reduceFx', 'reduceFxToggle']]) {
     const box = document.getElementById(id); if (!box) continue;
     box.checked = prefs[k];
     box.addEventListener('change', () => {
       prefs[k] = box.checked; try { localStorage.setItem(PREF[k], box.checked ? '1' : '0'); } catch (_) {}
       if (k === 'sound' && box.checked) { sfx.unlock(); sfx.thunk('right'); }
+      if ((k === 'sound' || k === 'ambient') && !box.checked) sfx.stopBed();
+      if (k === 'ambient' && box.checked && prefs.sound && state.loaded) { sfx.unlock(); sfx.startBed(); }
       if (k === 'haptics' && box.checked) buzz(HAPTIC.arm);
       document.documentElement.classList.toggle('reduce-fx', prefs.reduceFx);
     });

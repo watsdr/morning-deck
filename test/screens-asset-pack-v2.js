@@ -56,14 +56,18 @@ const api = async (p, o = {}) => (await fetch(BASE + p, { ...o, headers: { Autho
   check(await page.evaluate(() => document.documentElement.classList.contains('reduce-fx')), 'reduce-fx class set');
   check(await page.$eval('#fxBurst', (b) => b.hidden || getComputedStyle(b).display === 'none'), 'burst hidden under Reduce effects');
   await shot('reduce-effects-on.png');
-  // Sound Smith pack: all 15 cues served and decodable (sound itself stays off by default)
+  // Sound Smith pack: all 15 v1 + 5 v2 cues served and decodable (sound itself stays off by default)
   const snd = await page.evaluate(async () => {
-    const names = ['arm_tick', 'swish_right', 'swish_left', 'swish_up', 'swish_down', 'confirm_soft', 'dismiss_soft', 'sheet_open', 'card_reveal', 'deck_complete', 'error_soft', 'app_open', 'remove_tick', 'tour_nudge', 'tour_ok'];
+    const names = ['arm_tick', 'swish_right', 'swish_left', 'swish_up', 'swish_down', 'confirm_soft', 'dismiss_soft', 'sheet_open', 'card_reveal', 'deck_complete', 'error_soft', 'app_open', 'remove_tick', 'tour_nudge', 'tour_ok',
+      'priority_urgent', 'undo', 'streak', 'new_questions', 'amb_morning_bed'];
     const ac = new OfflineAudioContext(1, 48000, 48000); let ok = 0;
+    const sw = await (await fetch('/sw.js')).text(); const precached = names.filter((n) => sw.includes(`/assets/sfx/${n}.ogg`)).length;
     for (const n of names) { try { const r = await fetch(`/assets/sfx/${n}.ogg`); await ac.decodeAudioData(await r.arrayBuffer()); ok++; } catch (_) {} }
-    return { ok, soundDefault: localStorage.getItem('md_sound') };
+    return { ok, precached, ambientDefault: localStorage.getItem('md_ambient'), soundDefault: localStorage.getItem('md_sound') };
   });
-  check(snd.ok === 15, `sound cues decodable: ${snd.ok}/15`);
+  check(snd.ok === 20, `sound cues decodable (v1 + v2): ${snd.ok}/20`);
+  check(snd.precached === 20, `all cues precached in sw.js: ${snd.precached}/20`);
+  check(snd.ambientDefault === null && await page.$eval('#ambientToggle', (b) => !b.checked), 'Ambience toggle present and off by default');
   check(snd.soundDefault === null, 'Sound pref untouched (off by default)');
   console.log('page errors:', errs.length ? errs : 'none');
   await browser.close();
