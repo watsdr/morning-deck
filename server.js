@@ -84,6 +84,21 @@ function authed(req, url) {
   if (c && safeEq(c, COOKIE_VALUE)) return 'cookie';
   return null;
 }
+// Request-log tags: a coarse device class (never the raw user-agent), whether a valid sign-in cookie was present, and
+// whether a valid Bearer token was sent. Booleans only, no values. The answer-forwarding routine reads these.
+function deviceClass(ua) {
+  ua = String(ua || '');
+  if (!ua || /bot|crawl|spider|slurp|curl|wget|python|node|undici|go-http|okhttp|headless|axios|httpclient|java\//i.test(ua)) return 'bot';
+  if (/android/i.test(ua)) return 'android';
+  if (/iphone|ipad|ipod|mobile/i.test(ua)) return 'mobile';
+  return 'desktop';
+}
+function reqLogTags(req) {
+  let ck = 'no', bearer = 'n';
+  try { const c = parseCookies(req)[COOKIE]; if (c && safeEq(c, COOKIE_VALUE)) ck = 'ok'; } catch {}
+  const h = req.headers.authorization || ''; if (h.startsWith('Bearer ') && safeEq(h.slice(7).trim(), TOKEN)) bearer = 'y';
+  return `dev=${deviceClass(req.headers['user-agent'])} ck=${ck} bearer=${bearer}`;
+}
 // Always Secure (browsers treat http://127.0.0.1 and localhost as secure contexts, so local use still works) and
 // SameSite=Strict. See CROSS_SITE_BOUNCE below for how links from other apps still open the deck.
 function sessionCookie(maxAge = 31536000) {
@@ -585,7 +600,7 @@ const server = http.createServer(async (req, res) => {
   try { url = new URL(req.url, 'http://localhost'); } catch { return send(res, 400, 'bad url'); }
   res.on('finish', () => {
     const safePath = url.pathname + (url.searchParams.has('token') ? '?token=[redacted]' : '');
-    console.log(`${new Date().toISOString()} ${req.method} ${safePath} ${res.statusCode} ${Date.now() - started}ms`);
+    console.log(`${new Date().toISOString()} ${req.method} ${safePath} ${res.statusCode} ${Date.now() - started}ms ${reqLogTags(req)}`);
   });
   try {
     if (url.pathname === '/.well-known/assetlinks.json' && (req.method === 'GET' || req.method === 'HEAD')) {
