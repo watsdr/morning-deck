@@ -7,6 +7,7 @@
   const TZ = 'America/New_York';
   const DIRS = ['right', 'left', 'up', 'down'];
   const COLORS = { right: '#19c37d', left: '#ff4f6d', up: '#ffaa1f', down: '#8b7cf6', tap3: '#38b6ff', undo: '#b08b2e' };
+  const INK = { right: '#0e8a57', left: '#d62f50', up: '#b36b00', down: '#6a5ae0' }; // on-white variants (spec v2)
   const ICONS = {
     right: '<path d="M5 12h14M13 6l6 6-6 6"/>', left: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
     up: '<path d="M12 19V5M6 11l6-6 6 6"/>', down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
@@ -423,7 +424,7 @@
       const ul = h('ul', { class: 'options' });
       for (const d of ['right', 'left', 'down', 'up']) {
         if (!g[d] || g[d].disabled) continue;
-        const a = h('span', { class: 'arrow', style: `background:${COLORS[d]}` }); a.append(svgIcon(ICONS[d])); a.firstChild.style.cssText = 'width:15px;height:15px;fill:none;stroke:#fff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round';
+        const a = h('span', { class: 'arrow', style: `background:${INK[d] || COLORS[d]}` }); a.append(svgIcon(ICONS[d])); a.firstChild.style.cssText = 'width:15px;height:15px;fill:none;stroke:#fff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round';
         ul.append(h('li', {}, a, g[d].label));
       }
       node.append(ul);

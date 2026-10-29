@@ -11,9 +11,14 @@
   --up: #ffaa1f;
   --down: #8b7cf6;
   --tap3: #38b6ff;
+  /* -ink variants: anything drawn on the white card / white buttons (spec v2 §2, >=3:1 non-text) */
+  --right-ink: #0e8a57;
+  --left-ink: #d62f50;
+  --up-ink: #b36b00;
+  --down-ink: #6a5ae0;
   --ink: #1d1832;
   --ink-2: #4b4566;
-  --ink-3: #6b6585; /* AAA polish: was #8a84a3 (3.5:1 on the card); now >= 5:1 */
+  --ink-3: #6e6889; /* spec v2: was #8a84a3 (3.5:1 on the card); now 5.17:1 AA */
   --card: #fffdfb;
   --spring: cubic-bezier(.2, 1.35, .35, 1);
   --ease-out: cubic-bezier(.16, 1, .3, 1);
@@ -127,7 +132,7 @@ button { font: inherit; color: inherit; }
 @media (max-width: 380px) { .install-btn[data-mode="prompt"] span { display: none; } .install-btn[data-mode="prompt"] { padding: 0 9px; } }
 @keyframes bump { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
 .progress { height: 4px; margin: 0 20px; border-radius: 4px; background: rgba(255, 255, 255, .12); overflow: hidden; }
-.progress-fill { height: 100%; width: 100%; border-radius: 4px; background: linear-gradient(90deg, #ffd27a, #ff8c5a, #ff5f8f); transform: translateX(-100%); transition: transform .6s var(--ease-out); box-shadow: 0 0 12px rgba(255, 170, 110, .7); }
+.progress-fill { height: 100%; width: 100%; border-radius: 4px; background: linear-gradient(90deg, #ffd27a, #ff8c5a, #ff5f8f); transform: translateX(-100%); transition: transform .6s var(--ease-out); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45); } /* static highlight, no glow */
 
 .demo-banner {
   align-self: center; display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; max-width: calc(100% - 32px);
@@ -165,7 +170,7 @@ button { font: inherit; color: inherit; }
   transform-origin: 50% 85%;
   /* depth: 1.00 / .96 / .92, offset down 14 px per step */
   transform: translate3d(0, calc(var(--depth) * 14px), 0) scale(calc(1 - var(--depth) * .04));
-  transition: transform .55s var(--spring-soft), opacity .35s, filter .35s;
+  transition: transform .55s var(--spring-soft), opacity .35s;
   user-select: none; -webkit-user-select: none;
   touch-action: none;
   overflow: hidden;
@@ -196,10 +201,8 @@ html.reduce-fx .card, html.reduce-fx .card * { transition-duration: .01s !import
 .card[data-depth="0"], .card[data-depth="1"], .card[data-depth="2"], .card.flying { will-change: transform; }
 .card[data-depth="0"] .card-wash, .card[data-depth="0"] .card-ring { will-change: opacity; }
 .card[data-depth="0"] .stamp { will-change: opacity, scale; }
-.card[data-depth="1"] { filter: brightness(.92) saturate(.9); }
-.card[data-depth="2"] { filter: brightness(.82) saturate(.8); }
 .card[data-depth="3"] { opacity: 0; }
-/* Only the top card shows edge hints / stamps / glow. Back cards stay fully opaque (no wash-out), just dimmed. */
+/* Only the top card shows edge hints / stamps / glow. Back cards stay fully opaque (no wash-out; no filter dimming, spec v2). */
 .card:not([data-depth="0"]) .stamp,
 .card:not([data-depth="0"]) .card-wash,
 .card:not([data-depth="0"]) .card-ring,
@@ -278,7 +281,7 @@ html.reduce-fx .card, html.reduce-fx .card * { transition-duration: .01s !import
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 11.5px; font-weight: 750; letter-spacing: .02em;
   padding: 6px 11px; border-radius: 999px;
-  color: color-mix(in srgb, var(--c) 80%, #1d1832);
+  color: var(--c);
   background: color-mix(in srgb, var(--c) 10%, #fff);
   border: 1px solid color-mix(in srgb, var(--c) 22%, transparent);
   opacity: .78; transition: transform .2s var(--spring), opacity .2s;
@@ -286,10 +289,10 @@ html.reduce-fx .card, html.reduce-fx .card * { transition-duration: .01s !import
 }
 .hint span { overflow: hidden; text-overflow: ellipsis; }
 .hint svg { width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.hint-up { --c: var(--up); top: 10px; left: 50%; transform: translateX(-50%); }
-.hint-down { --c: var(--down); bottom: 14px; left: 50%; transform: translateX(-50%); max-width: 34%; }
-.hint-left { --c: var(--left); bottom: 14px; left: 14px; max-width: 30%; }
-.hint-right { --c: var(--right); bottom: 14px; right: 14px; max-width: 30%; }
+.hint-up { --c: var(--up-ink); top: 10px; left: 50%; transform: translateX(-50%); }
+.hint-down { --c: var(--down-ink); bottom: 14px; left: 50%; transform: translateX(-50%); max-width: 34%; }
+.hint-left { --c: var(--left-ink); bottom: 14px; left: 14px; max-width: 30%; }
+.hint-right { --c: var(--right-ink); bottom: 14px; right: 14px; max-width: 30%; }
 .hint.active { opacity: 1; color: #fff; background: var(--c); border-color: transparent; box-shadow: 0 6px 18px -4px var(--c); }
 .hint-up.active, .hint-down.active { transform: translateX(-50%) scale(1.12); }
 .hint-left.active, .hint-right.active { transform: scale(1.12); }
@@ -310,10 +313,10 @@ html.reduce-fx .card, html.reduce-fx .card * { transition-duration: .01s !import
 .stamp-left .stamp-ico { --ico: url(assets/stamp-no.svg); }
 .stamp-up .stamp-ico { --ico: url(assets/stamp-later.svg); }
 .stamp-down .stamp-ico { --ico: url(assets/stamp-handback.svg); }
-.stamp-right { max-width: 74%; color: var(--right); top: 56px; left: 22px; rotate: -14deg; transform-origin: left center; }
-.stamp-left { max-width: 74%; color: var(--left); top: 56px; right: 22px; rotate: 14deg; transform-origin: right center; }
-.stamp-up { color: var(--up); bottom: 96px; left: 50%; translate: -50% 0; rotate: -6deg; }
-.stamp-down { color: var(--down); top: 120px; left: 50%; translate: -50% 0; rotate: 5deg; }
+.stamp-right { max-width: 74%; color: var(--right-ink); top: 56px; left: 22px; rotate: -14deg; transform-origin: left center; }
+.stamp-left { max-width: 74%; color: var(--left-ink); top: 56px; right: 22px; rotate: 14deg; transform-origin: right center; }
+.stamp-up { color: var(--up-ink); bottom: 96px; left: 50%; translate: -50% 0; rotate: -6deg; }
+.stamp-down { color: var(--down-ink); top: 120px; left: 50%; translate: -50% 0; rotate: 5deg; }
 .stamp-tap3 { color: var(--tap3); top: 42%; left: 50%; translate: -50% -50%; rotate: -8deg; }
 
 /* built-in feedback card */
@@ -369,7 +372,7 @@ html.reduce-fx .card, html.reduce-fx .card * { transition-duration: .01s !import
   display: grid; place-items: center;
   background: rgba(255, 255, 255, .96);
   box-shadow: 0 10px 24px -8px rgba(10, 4, 40, .6), inset 0 -2px 0 rgba(0, 0, 0, .05);
-  transition: transform .25s var(--spring), box-shadow .2s, opacity .2s;
+  transition: transform .25s var(--spring), opacity .2s;
   margin-bottom: 18px;
 }
 .act.big { width: 64px; height: 64px; }
@@ -384,16 +387,16 @@ html.reduce-fx .card, html.reduce-fx .card * { transition-duration: .01s !import
 .actions.live .act { transition: none; }
 .act:hover:not(:disabled) { transform: translateY(-2px); }
 .act:disabled { opacity: .4; cursor: default; }
-.act-left { --c: var(--left); }
-.act-right { --c: var(--right); }
-.act-up { --c: var(--up); }
-.act-down { --c: var(--down); }
+.act-left { --c: var(--left-ink); }
+.act-right { --c: var(--right-ink); }
+.act-up { --c: var(--up-ink); }
+.act-down { --c: var(--down-ink); }
 .act-tap3 { --c: var(--tap3); }
 .act-undo { --c: #b08b2e; width: 42px; height: 42px; }
 .act-tap3 { width: 42px; height: 42px; }
 .act-undo svg, .act-tap3 svg { width: 19px; height: 19px; }
 .act.flash { animation: flash .5s var(--spring); }
-@keyframes flash { 30% { transform: scale(1.18); box-shadow: 0 0 0 8px color-mix(in srgb, var(--c) 30%, transparent), 0 10px 24px -8px rgba(10, 4, 40, .6); } }
+@keyframes flash { 30% { transform: scale(1.18); } } /* transform only (spec v2 §5) */
 
 .safety { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: rgba(255, 255, 255, .62); padding: 2px 16px 4px; text-align: center; }
 .safety svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; flex: none; }
@@ -453,7 +456,7 @@ html.reduce-fx .card, html.reduce-fx .card * { transition-duration: .01s !import
 .sheet-quick { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 4px; }
 .qbtn {
   border: 0; cursor: pointer; padding: 8px 12px; border-radius: 12px; font-size: 13px; font-weight: 700;
-  background: color-mix(in srgb, var(--c) 12%, #fff); color: color-mix(in srgb, var(--c) 80%, #1d1832);
+  background: color-mix(in srgb, var(--c) 12%, #fff); color: var(--c);
   border: 1px solid color-mix(in srgb, var(--c) 25%, transparent);
   transition: background .2s, color .2s, transform .25s var(--spring), box-shadow .2s;
 }
