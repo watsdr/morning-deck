@@ -1,5 +1,5 @@
 /* Morning Deck service worker: cache the app shell, network-first for the API. */
-const VERSION = 'md-v26'; // bump on every app release so phones pick up the new shell
+const VERSION = 'md-v27'; // bump on every app release so phones pick up the new shell
 const cacheable = (res) => res.ok && res.status === 200 && res.type === 'basic' && !res.headers.get('X-MD-Lock');
 const SHELL_CACHE = `${VERSION}-shell`;
 const API_CACHE = `${VERSION}-api`;
@@ -10,7 +10,8 @@ const SHELL = ['/', '/styles.css', '/app.js', '/manifest.webmanifest', '/fonts/j
   '/assets/emblems/emblem-chief.svg', '/assets/emblems/emblem-trip.svg', '/assets/emblems/emblem-money.svg', '/assets/emblems/emblem-code.svg', '/assets/emblems/emblem-mail.svg', '/assets/emblems/emblem-health.svg',
   '/assets/v2/aurora-depth.webp', '/assets/v2/confetti-burst.svg', '/assets/v2/streak-flame-v2.svg', '/assets/v2/edge-glow-right.svg', '/assets/v2/edge-glow-left.svg', '/assets/v2/edge-glow-up.svg', '/assets/v2/edge-glow-down.svg', '/assets/v2.1/card-lit-light.svg',
   '/assets/sfx/arm_tick.ogg', '/assets/sfx/swish_right.ogg', '/assets/sfx/swish_left.ogg', '/assets/sfx/swish_up.ogg', '/assets/sfx/swish_down.ogg', '/assets/sfx/confirm_soft.ogg', '/assets/sfx/dismiss_soft.ogg', '/assets/sfx/sheet_open.ogg', '/assets/sfx/card_reveal.ogg', '/assets/sfx/deck_complete.ogg', '/assets/sfx/error_soft.ogg', '/assets/sfx/app_open.ogg', '/assets/sfx/remove_tick.ogg', '/assets/sfx/tour_nudge.ogg', '/assets/sfx/tour_ok.ogg',
-  '/assets/sfx/priority_urgent.ogg', '/assets/sfx/undo.ogg', '/assets/sfx/streak.ogg', '/assets/sfx/new_questions.ogg', '/assets/sfx/amb_morning_bed.ogg'];
+  '/assets/sfx/priority_urgent.ogg', '/assets/sfx/undo.ogg', '/assets/sfx/streak.ogg', '/assets/sfx/new_questions.ogg', '/assets/sfx/amb_morning_bed.ogg',
+  '/assets/sfx/swish_right_01.ogg', '/assets/sfx/swish_right_02.ogg', '/assets/sfx/swish_right_03.ogg', '/assets/sfx/swish_left_01.ogg', '/assets/sfx/swish_left_02.ogg', '/assets/sfx/swish_left_03.ogg', '/assets/sfx/swish_up_01.ogg', '/assets/sfx/swish_up_02.ogg', '/assets/sfx/swish_up_03.ogg', '/assets/sfx/swish_down_01.ogg', '/assets/sfx/swish_down_02.ogg', '/assets/sfx/swish_down_03.ogg', '/assets/sfx/arm_tick_01.ogg', '/assets/sfx/arm_tick_02.ogg', '/assets/sfx/arm_tick_03.ogg', '/assets/sfx/card_reveal_01.ogg', '/assets/sfx/card_reveal_02.ogg', '/assets/sfx/card_reveal_03.ogg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL_CACHE).then((c) => Promise.all(SHELL.map((u) => fetch(u, { cache: 'no-cache' }).then((r) => cacheable(r) ? c.put(u, r) : null).catch(() => null)))).then(() => self.skipWaiting()));

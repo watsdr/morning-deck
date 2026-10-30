@@ -22,8 +22,10 @@
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
   const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
   // Haptics: behind the Haptics toggle, guarded (iOS Safari has no vibrate); single pulses capped at 40 ms.
-  const buzz = (p) => { if (!prefs.haptics || typeof navigator.vibrate !== 'function') return; try { navigator.vibrate(Array.isArray(p) ? p : Math.min(40, p)); } catch (_) {} };
-  const HAPTIC = { arm: 8, right: [12, 30, 18], left: [18], up: [8, 30, 8], down: [10], tap3: [12, 30, 18], cleared: [30, 40, 30, 40, 60] };
+  // Patterns follow Sound Smith haptics-mix-v1 (cleaned): no pulse < 10 ms, no gap < 50 ms (Android can't render/discern less).
+  const cleanVib = (p) => (Array.isArray(p) ? p : [p]).map((v, i) => (i % 2 ? Math.max(50, v) : clamp(v, 10, 40)));
+  const buzz = (p) => { if (!prefs.haptics || typeof navigator.vibrate !== 'function') return; try { navigator.vibrate(cleanVib(p)); } catch (_) {} };
+  const HAPTIC = { arm: 10, right: [12, 50, 18], left: [18], up: [10, 50, 10], down: [10], tap3: [12, 50, 18], cleared: [30, 50, 30, 50, 40] };
   // Sound: one shared WebAudio context, created/unlocked on the first tap after Sound is turned on. Everything is
   // synthesized here (no audio files): swish = filtered noise ~120 ms, thunk = short pitched-down sine, chime = 3 rising notes.
   const sfx = (() => {
@@ -56,7 +58,12 @@
     const CUES = ['arm_tick', 'swish_right', 'swish_left', 'swish_up', 'swish_down', 'confirm_soft', 'dismiss_soft', 'sheet_open',
       'card_reveal', 'deck_complete', 'error_soft', 'app_open', 'remove_tick', 'tour_nudge', 'tour_ok',
       // morning-deck-v2 add-on cues (pack-only, no synth fallback); the ambient bed is fetched only when its toggle is on
-      'priority_urgent', 'undo', 'streak', 'new_questions'];
+      'priority_urgent', 'undo', 'streak', 'new_questions',
+      // morning-deck-v3-variations add-on: 3 extra takes per cue below (v1 file = take 0); random, never the same take twice running
+      ...['swish_right', 'swish_left', 'swish_up', 'swish_down', 'arm_tick', 'card_reveal'].flatMap((n) => [1, 2, 3].map((i) => `${n}_0${i}`))];
+    const VARIANTS = 3, lastTake = {};
+    // md:pickTake (pure; test/sound-variations.js evaluates this line) - random index in [0,n) that differs from `last`
+    const pickTake = (n, last, rnd = Math.random) => { if (n < 2) return 0; let i = Math.floor(rnd() * (n - 1)); if (last != null && i >= last) i++; return i; };
     const bufs = {}, ready = {}; let loading = false;
     function fetchCue(n) {
       return (ready[n] = ready[n] || fetch(`/assets/sfx/${n}.ogg`).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()))
@@ -70,7 +77,11 @@
     function stopBed() { if (!bed) return; try { bed.src.stop(); } catch (_) {} bed = null; }
     function cue(name) { // true if the pack cue played; false -> caller falls back to synth
       if (!ensure()) return true; // sound off: nothing should play at all
-      const b = bufs[name]; if (!b) return false;
+      let b = bufs[name]; if (!b) return false;
+      if (bufs[`${name}_01`]) { // variation pool: only takes that have decoded; v1 file stays the fallback
+        const takes = [name, ...[1, 2, 3].slice(0, VARIANTS).map((i) => `${name}_0${i}`)].filter((n) => bufs[n]);
+        const i = pickTake(takes.length, lastTake[name] != null && lastTake[name] < takes.length ? lastTake[name] : null); lastTake[name] = i; b = bufs[takes[i]];
+      }
       try { const src = ctx.createBufferSource(); src.buffer = b; const g = ctx.createGain(); g.gain.value = 1 / VOL * 0.5; src.connect(g).connect(master); src.start(); return true; } catch (_) { return false; }
     }
     const THUNK = { right: 'confirm_soft', tap3: 'confirm_soft', left: 'dismiss_soft', up: 'remove_tick', down: 'remove_tick' };
@@ -963,7 +974,7 @@
     tapTimer = setTimeout(() => { state.taps = []; dots.forEach((d) => d.classList.remove('on')); }, 720);
     if (state.taps.length >= 3) {
       state.taps = [];
-      buzz([6, 40, 6]);
+      buzz([10, 50, 10]);
       setTimeout(() => dots.forEach((d) => d.classList.remove('on')), 300);
       openSheet(topCardData(node));
     }
@@ -1189,7 +1200,7 @@
     const node = el.thumbs.querySelector(`[data-key="${key}"]`);
     if (node) { node.classList.add('leaving'); setTimeout(() => node.remove(), reduced() ? 0 : 220); }
     if (p.url) setTimeout(() => URL.revokeObjectURL(p.url), 400);
-    buzz(6); updateSave();
+    buzz(10); updateSave();
   }
   function clearPhotos() {
     for (const p of state.photos) if (p.url) URL.revokeObjectURL(p.url);
@@ -1850,7 +1861,7 @@
     };
     const advance = (g) => {
       const s = TOUR_STEPS[tour.step];
-      if (g !== s.g) { live.textContent = `That was ${g === 'tap3' ? 'a triple-tap' : 'a swipe ' + g}. Try: ${s.title.toLowerCase()}.`; buzz(8); sfx.cue('tour_nudge'); card.style.transition = 'transform .22s cubic-bezier(.16,1,.3,1)'; card.style.transform = ''; card.classList.remove('tour-shake'); void card.offsetWidth; card.classList.add('tour-shake'); return; }
+      if (g !== s.g) { live.textContent = `That was ${g === 'tap3' ? 'a triple-tap' : 'a swipe ' + g}. Try: ${s.title.toLowerCase()}.`; buzz(10); sfx.cue('tour_nudge'); card.style.transition = 'transform .22s cubic-bezier(.16,1,.3,1)'; card.style.transform = ''; card.classList.remove('tour-shake'); void card.offsetWidth; card.classList.add('tour-shake'); return; }
       buzz(15); sfx.cue('tour_ok'); live.textContent = `${s.title}: got it.`;
       const off = { right: [1, 0], left: [-1, 0], up: [0, -1], down: [0, 1], tap3: [0, 0] }[g];
       card.style.transition = reduced() ? 'opacity .15s' : 'transform .26s cubic-bezier(.16,1,.3,1), opacity .26s';
