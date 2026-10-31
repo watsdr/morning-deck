@@ -51,7 +51,7 @@ function matchResolved(card, rows) {
 
 // ---------- ranking ----------
 // Due date: dueAt (or legacy `due`); a card with only expiresAt is due when it expires (it disappears then).
-const dueOf = (c) => { const v = c.dueAt || c.due || c.expiresAt; const t = v ? Date.parse(v) : NaN; return Number.isNaN(t) ? Infinity : t; };
+const dueOf = (c) => { const v = c.dueAt || c.due; const t = v ? Date.parse(v) : core.expiryOf(c); return Number.isNaN(t) ? Infinity : t; };
 const ageOf = (c) => Date.parse(c.createdAt || c.receivedAt || 0) || 0;
 // Items due today (ET) or overdue always rank first; then by due date, age, skips.
 const STALE_DAYS = 7;
@@ -73,7 +73,7 @@ function assemble(cards, rows, now) {
       c.status = 'pending'; delete c.snoozedUntil; unsnoozed.push(c.id);
     }
     // 2) expired / settled -> withdrawn
-    if (c.expiresAt && Date.parse(c.expiresAt) <= now.getTime()) {
+    if (core.expiryOf(c) <= now.getTime()) { // never before dueAt or a stated "by <date>" deadline
       c.withdrawn = true; c.withdrawnReason = 'expired'; c.withdrawnAt = now.toISOString(); closed.push({ id: c.id, title: c.title, reason: 'expired' }); continue;
     }
     const m = matchResolved(c, rows);
