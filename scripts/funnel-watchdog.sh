@@ -3,14 +3,16 @@
 #   scripts/funnel-watchdog.sh          -> loop forever (single instance, flock on run/watchdog.loop.lock, pid in run/watchdog.pid)
 #   scripts/funnel-watchdog.sh --once   -> one check (records into the same rolling window, may restart), then exit
 # Restart rule: >= WD_FAILS_IN_WINDOW failures among the last WD_WINDOW checks, or WD_FAILS_IN_ROW in a row.
-# Cooldown: no second restart within WD_COOLDOWN seconds. Every failed check and every restart is logged to logs/watchdog.log.
+# Checks every 10 s; a failure is re-probed after 3 s so blips are logged but don't count, and real drops log start + length.
+# Cooldown: no second restart within WD_COOLDOWN seconds (300). Every failed check and every restart is logged to logs/watchdog.log.
 cd "$(dirname "$0")/.." || exit 1
 ROOT=$(pwd)
 PORT=$(sed -n 's/^MD_PORT=//p' .env 2>/dev/null | head -1); PORT=${PORT:-8787}
 URL=${WD_URL:-https://morning-deck.tail164b96.ts.net/manifest.webmanifest}
 HUB_PATH=/hub-world; HUB_PORT=8796
 WINDOW=${WD_WINDOW:-8}; IN_WINDOW=${WD_FAILS_IN_WINDOW:-4}; IN_ROW=${WD_FAILS_IN_ROW:-3}
-COOLDOWN=${WD_COOLDOWN:-600}; INTERVAL=${WD_INTERVAL:-20}
+COOLDOWN=${WD_COOLDOWN:-300}; INTERVAL=${WD_INTERVAL:-10}; RECHECK=${WD_RECHECK:-3}
+OUTAGE=run/watchdog.outage BACKUP_FLAG=run/backup-tunnel.enabled
 STATE=run/watchdog.window LAST=run/watchdog.last-restart LOG=logs/watchdog.log
 TS=( "$ROOT/bin/tailscale" "--socket=$ROOT/run/tailscale/tailscaled.sock" )
 LOCAL_TIMEOUT=${WD_LOCAL_TIMEOUT:-15}; LOCAL_MISSES=${WD_LOCAL_MISSES:-3}; LOCAL_MISS=run/watchdog.local-miss
@@ -52,9 +54,31 @@ restart_funnel() {
   flock -u 8
 }
 
+# Backup route: keep a Cloudflare quick tunnel (no account) up while run/backup-tunnel.enabled exists.
+# Its URL changes when it restarts; the new one goes to run/tunnel.url and the log (never with a token).
+keep_backup() {
+  [ -f "$BACKUP_FLAG" ] || return 0
+  if [ -f run/tunnel.pid ] && kill -0 "$(cat run/tunnel.pid)" 2>/dev/null; then
+    local u; u=$(cat run/tunnel.url 2>/dev/null)
+    [ -n "$u" ] && [ "$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$u/manifest.webmanifest")" = 200 ] && return 0
+    [ $(( $(date +%s) - $(stat -c %Y run/tunnel.pid) )) -lt 60 ] && return 0 # just started; give it a minute
+    log "backup tunnel unhealthy ($u), restarting"; kill "$(cat run/tunnel.pid)" 2>/dev/null; sleep 1
+  fi
+  : > logs/tunnel.log
+  ( exec setsid nohup "$ROOT/bin/cloudflared" tunnel --no-autoupdate --protocol http2 --url "http://127.0.0.1:$PORT" >> logs/tunnel.log 2>&1 </dev/null 6>&- 7>&- 8>&- 9>&- ) &
+  echo $! > run/tunnel.pid
+  local nu=""; for _ in $(seq 1 30); do nu=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' logs/tunnel.log | head -1); [ -n "$nu" ] && break; sleep 1; done
+  if [ -n "$nu" ]; then [ "$nu" != "$(cat run/tunnel.url 2>/dev/null)" ] && log "BACKUP URL CHANGED -> $nu"; echo "$nu" > run/tunnel.url; else log "backup tunnel started, no URL yet"; fi
+}
+probe() { local c; c=$(curl -s -o /dev/null -m 8 -w '%{http_code}' "$URL"); echo "${c:-000}"; }
 check_once() {
   local code win fails row
-  code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$URL"); code=${code:-000}
+  code=$(probe)
+  # short drops: confirm a failure with a quick re-probe, and log when each drop starts and how long it lasted
+  if ! healthy "$code"; then sleep "$RECHECK"; local c2; c2=$(probe); healthy "$c2" && { log "blip: $URL -> $code, ok again after ${RECHECK}s"; code=$c2; }; fi
+  if healthy "$code"; then
+    if [ -f "$OUTAGE" ]; then log "DROP ended after $(( $(date +%s) - $(cat "$OUTAGE") ))s"; rm -f "$OUTAGE"; fi
+  else [ -f "$OUTAGE" ] || { date +%s > "$OUTAGE"; log "DROP started"; }; fi
   if healthy "$code"; then echo 0 >> "$STATE"; else echo 1 >> "$STATE"; log "check failed: $URL -> $code"; fi
   tail -n "$WINDOW" "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
   fails=$(grep -c 1 "$STATE"); row=$(tac "$STATE" | awk '$1==1{n++;next}{exit}END{print n+0}')
@@ -71,10 +95,11 @@ check_once() {
   start_server
   echo 0 > "$LOCAL_MISS"
 }
+check_all() { check_once; exec 6>run/backup.lock; if flock -n 6; then keep_backup; flock -u 6; fi; exec 6>&-; }
 
 if [ "${1:-}" = "--once" ]; then
   exec 7>run/watchdog-once.lock; flock -w 30 7 || exit 0
-  check_once; exit 0
+  check_all; exit 0
 fi
 
 kill_stale_once() { # --once runs older than 120 s are hung; kill them
@@ -86,4 +111,4 @@ echo $$ > run/watchdog.pid
 kill_stale_once
 log "watchdog started (pid $$; window $IN_WINDOW/$WINDOW, $IN_ROW in a row, cooldown ${COOLDOWN}s)"
 trap 'log "watchdog stopped (pid $$)"; rm -f run/watchdog.pid; exit 0' TERM INT
-while true; do kill_stale_once; check_once; sleep "$INTERVAL" 9>&- & wait $!; done
+while true; do kill_stale_once; check_all; sleep "$INTERVAL" 9>&- & wait $!; done
