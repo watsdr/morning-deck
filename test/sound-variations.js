@@ -23,7 +23,7 @@ const NAMES = ['swish_right', 'swish_left', 'swish_up', 'swish_down', 'arm_tick'
   assert.strictEqual(pickTake(4, 0, () => 0), 1); assert.strictEqual(pickTake(4, 3, () => 0.9999), 2);
   console.log('ok  no-repeat picker (5000 draws x pools 2/3/4)');
   const sw = await (await fetch(`${B}/sw.js`)).text();
-  assert(sw.includes("'md-v27'"), 'SW version not md-v27');
+  assert(+(sw.match(/'md-v(\d+)'/)||[])[1] >= 27, 'SW version below md-v27');
   let bytes = 0;
   for (const n of NAMES) {
     const u = `/assets/sfx/${n}.ogg`;

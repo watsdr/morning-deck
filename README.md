@@ -337,3 +337,10 @@ If the cookie disappears (installed PWA or the private APK relaunching, a cache 
 trades the key at `POST /signin/renew` for a fresh cookie, capped at the original 180-day session. Rotating the
 token, or emptying `data/device-keys.json`, signs every device out. Keys are only issued to cookie sessions
 (never Bearer), same-origin; renew failures share the sign-in rate limiter.
+
+## Morning alert (Web Push)
+VAPID keys live in the git-ignored `.env` (`scripts/init-vapid.sh`, private key never printed). Turn on
+**Settings → Notify me** on the phone once. The 6:15 AM ET `scripts/assemble.js` run sends one count-only push when
+at least one card is pending (none at 0 cards). Any other step can call `scripts/notify-ready.sh` (localhost,
+Bearer from `.env`). Pushes go out from the box to the browser's push service (FCM for Chrome), not through the
+Funnel; the Funnel only has to serve the HTTPS page where the phone subscribes.
