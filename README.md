@@ -330,3 +330,10 @@ run/tailscale/          tailscaled state: node key, certs, funnel config (git-ig
 - **Manifest shortcuts** (Deck, Recap, Main Menu) and the App Badging API (pending count). A real home-screen widget needs the
   Android project at /workspace/morning-deck-android.
 - Tests: `node test/due-stale.js`, `node test/isolated.js test/assemble-push.js`, `node test/isolated.js test/screens-batch2.js --empty`.
+
+## Staying signed in on the installed app
+A signed-in phone stores a random device key in IndexedDB (only its sha256 hash is kept in `data/device-keys.json`).
+If the cookie disappears (installed PWA or the private APK relaunching, a cache update), the app or the lock page
+trades the key at `POST /signin/renew` for a fresh cookie, capped at the original 180-day session. Rotating the
+token, or emptying `data/device-keys.json`, signs every device out. Keys are only issued to cookie sessions
+(never Bearer), same-origin; renew failures share the sign-in rate limiter.

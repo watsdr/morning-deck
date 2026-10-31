@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Run a test against a throwaway server: temp data dir (MD_DATA_DIR) + separate port, never the live data/ or 8787.
-//   node test/isolated.js test/e2e.js [--empty] [--port 8799]
+//   node test/isolated.js test/e2e.js [--empty] [--port 8811]
 // Seeds the SAMPLE deck (or nothing with --empty), starts server.js, runs the test with MD_BASE/MD_DATA_DIR set, stops the server.
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const args = process.argv.slice(2);
-const port = +(args.includes('--port') ? args[args.indexOf('--port') + 1] : 8799);
+const port = +(args.includes('--port') ? args[args.indexOf('--port') + 1] : 8811);
 const test = args.find((a) => a.endsWith('.js'));
 const live = +(fs.readFileSync(path.join(ROOT, '.env'), 'utf8').match(/^MD_PORT=(\d+)/m) || [0, 8787])[1];
 if (!test) { console.error('usage: node test/isolated.js <test.js> [--empty] [--port N]'); process.exit(2); }

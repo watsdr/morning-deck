@@ -266,9 +266,46 @@
     };
   }
 
+  // ---------- stay signed in (installed app) ----------
+  // A signed-in phone keeps a device key in IndexedDB ('md-auth'/'kv'/'devkey'; cache updates never clear it). If the
+  // cookie is gone (app relaunch, cleared cookies), the key buys a fresh cookie for what's left of the 180-day session.
+  const authDb = (mode, fn) => new Promise((resolve) => {
+    try {
+      const o = indexedDB.open('md-auth', 1);
+      o.onupgradeneeded = () => o.result.createObjectStore('kv');
+      o.onsuccess = () => { try { const t = o.result.transaction('kv', mode); const r = fn(t.objectStore('kv')); t.oncomplete = () => resolve(r && r.result); t.onerror = () => resolve(null); } catch (_) { resolve(null); } };
+      o.onerror = () => resolve(null);
+    } catch (_) { resolve(null); }
+  });
+  const getDevKey = () => authDb('readonly', (s) => s.get('devkey'));
+  let renewing = null;
+  function renewSession() {
+    if (STATIC_DEMO) return Promise.resolve(false);
+    return renewing || (renewing = (async () => {
+      const key = await getDevKey(); if (!key) return false;
+      try {
+        const r = await fetch('/signin/renew', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+        if (r.status === 401) await authDb('readwrite', (s) => s.delete('devkey'));
+        return r.ok;
+      } catch (_) { return false; }
+    })().finally(() => { setTimeout(() => { renewing = null; }, 5000); }));
+  }
+  let keyAsked = false;
+  async function ensureDeviceKey() {
+    if (STATIC_DEMO || keyAsked) return; keyAsked = true;
+    try { sessionStorage.removeItem('md_renew_tried'); } catch (_) {}
+    if (await getDevKey()) return;
+    try {
+      const r = await fetch('/api/session/key', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (r.ok) { const j = await r.json(); if (j.key) await authDb('readwrite', (s) => s.put(j.key, 'devkey')); }
+    } catch (_) {}
+  }
+
   // ---------- API + offline outbox ----------
   async function api(path, opts = {}) {
-    const res = await apiFetch(path, { credentials: 'same-origin', ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+    let res = await apiFetch(path, { credentials: 'same-origin', ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+    if (res.status === 401 && await renewSession()) res = await apiFetch(path, { credentials: 'same-origin', ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+    if (res.status === 200 && !keyAsked) ensureDeviceKey();
     if (res.status === 401) { showLocked(); const e = new Error('unauthorized'); e.status = 401; throw e; }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { const e = new Error(data.error || res.statusText); e.status = res.status; e.data = data; throw e; }
@@ -278,8 +315,9 @@
   const transient = (e) => !e.status || e.status >= 500 || e.status === 408 || e.status === 429;
   // Upload one processed photo. X-Client-Upload-Id makes retries idempotent (same photo -> same upload id).
   async function uploadPhoto(p) {
-    const res = await apiFetch('/api/uploads', { method: 'POST', credentials: 'same-origin', body: p.blob,
+    const go = () => apiFetch('/api/uploads', { method: 'POST', credentials: 'same-origin', body: p.blob,
       headers: { 'Content-Type': p.mime || 'application/octet-stream', 'X-Client-Upload-Id': p.clientUploadId, ...(p.width ? { 'X-Image-Width': String(p.width), 'X-Image-Height': String(p.height) } : {}) } });
+    let res = await go(); if (res.status === 401 && await renewSession()) res = await go();
     if (res.status === 401) { showLocked(); const e = new Error('unauthorized'); e.status = 401; throw e; }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { const e = new Error(data.error || res.statusText); e.status = res.status; throw e; }

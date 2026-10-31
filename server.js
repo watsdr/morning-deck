@@ -11,6 +11,7 @@ const uploads = require('./lib/uploads');
 const push = require('./lib/push');
 const insights = require('./lib/insights');
 const pairing = require('./lib/pairing');
+const devkeys = require('./lib/device-keys');
 const recap = require('./lib/recap');
 const device = require('./lib/device-approval');
 let QRCode = null; try { QRCode = require('qrcode'); } catch (_) { /* QR pairing disabled */ }
@@ -55,6 +56,7 @@ const ASSETLINKS_FILE = process.env.MD_ASSETLINKS_FILE || path.join(core.ROOT, '
 const APK_FILE = process.env.MD_APK_FILE || path.join(core.ROOT, '..', 'morning-deck-android', 'MorningDeck.apk');
 const COOKIE = 'md_session';
 const COOKIE_VALUE = crypto.createHash('sha256').update('morning-deck-cookie:' + TOKEN).digest('base64url');
+devkeys.setBinding(COOKIE_VALUE);
 
 // ---------- helpers ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
@@ -104,6 +106,9 @@ function reqLogTags(req) {
 function sessionCookie(maxAge = 31536000) {
   return `${COOKIE}=${COOKIE_VALUE}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
 }
+// Non-secret companion: when this device's session began (ms), so a stay-signed-in key never outlives 180 days.
+const sinceCookie = (maxAge, t = Date.now()) => `md_since=${t}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
+const sessionCookies = (maxAge = 31536000, t) => [sessionCookie(maxAge), sinceCookie(maxAge, t)];
 const PAIR_COOKIE_AGE = 180 * 86400; // QR-paired phones: ~180 days
 const SEC_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' };
 function send(res, status, body, headers = {}) {
@@ -178,7 +183,14 @@ html[data-theme=light]{color-scheme:light;--bg:linear-gradient(180deg,#e9e3ff,#f
 .md-lock button{font:inherit;font-weight:600;font-size:16px;border:0;border-radius:12px;padding:12px;background:var(--btn);color:var(--btnfg);cursor:pointer}.md-lock button:disabled{opacity:.6}
 .md-lock .err{color:var(--err);min-height:1.4em;font-size:14px}.md-lock small{color:var(--sub);font-size:13px;line-height:1.45;display:block}`;
 // Form logic, inline on the page; app.js runs the same markup/script when an /api call 401s (it GETs /signin).
-const LOCK_SCRIPT = `(function(){var d=document.getElementById('mdDevBtn');if(!d)return;var w=document.getElementById('mdDev'),de=document.getElementById('mdDevErr');
+// Installed app with no cookie: trade its stored device key for a fresh cookie, once per tab (no loops).
+const RENEW_SCRIPT = `(function(){try{if(sessionStorage.getItem('md_renew_tried'))return;var o=indexedDB.open('md-auth',1);o.onupgradeneeded=function(){o.result.createObjectStore('kv')};
+o.onsuccess=function(){var db=o.result,g=db.transaction('kv').objectStore('kv').get('devkey');g.onsuccess=function(){var k=g.result;if(!k)return;sessionStorage.setItem('md_renew_tried','1');
+var h=document.getElementById('mdLockH');if(h)h.textContent='Signing you back in\u2026';
+fetch('/signin/renew',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})}).then(function(r){
+if(r.ok){var u=new URL(location.href);u.searchParams.delete('token');location.replace(u.pathname==='/signin'?'/':u.pathname+u.search);return}
+if(r.status===401)db.transaction('kv','readwrite').objectStore('kv').delete('devkey');if(h)h.textContent='Sign in again'}).catch(function(){if(h)h.textContent='Sign in again'})}}}catch(e){}})();`;
+const LOCK_SCRIPT = RENEW_SCRIPT + `(function(){var d=document.getElementById('mdDevBtn');if(!d)return;var w=document.getElementById('mdDev'),de=document.getElementById('mdDevErr');
 d.addEventListener('click',function(){d.disabled=true;de.textContent='';fetch('/signin/request',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
 if(!r.ok){d.disabled=false;de.textContent=r.status===429?(j.error||'Too many requests. Try again later.'):(j.error||'Could not start a request.');return}
 var until=Date.parse(j.expiresAt);w.innerHTML='<p>Approve this code on the box:</p><p id="mdDevCode" style="font:700 34px/1.2 ui-monospace,monospace;letter-spacing:.18em;margin:6px 0;color:var(--fg)"></p><small id="mdDevWait">Waiting for approval…</small>';
@@ -221,9 +233,25 @@ async function handleSignin(req, res) {
   let raw = ''; try { const b = (await readBody(req, 4096)) || {}; raw = String(b.token || '').trim(); } catch (e) { return json(res, e.status || 400, { error: 'send JSON {"token": "..."}' }); }
   // Accept a bare token or a whole sign-in link (…?token=…).
   if (/[?&]token=/.test(raw)) { try { raw = new URL(raw, 'http://x').searchParams.get('token') || ''; } catch { raw = ''; } }
-  if (raw && safeEq(raw, TOKEN)) { signinFails.delete(key); return json(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie() }); }
+  if (raw && safeEq(raw, TOKEN)) { signinFails.delete(key); return json(res, 200, { ok: true }, { 'Set-Cookie': sessionCookies() }); }
   const now = Date.now(); signinFails.get(key).push(now); signinGlobal.push(now);
   return json(res, 401, { error: 'That token didn\u2019t work. It may have been rotated.' });
+}
+
+// ---------- stay signed in on the installed app (lib/device-keys.js) ----------
+// Same failure limiter as /signin. Success re-sets the cookie only for the time left on the original 180-day session.
+async function handleRenew(req, res) {
+  if (DEMO) return json(res, 404, { error: 'not found' });
+  if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: 'cross-site renew refused' });
+  const key = signinKey(req); const wait = signinBlocked(key);
+  if (wait) return json(res, 429, { error: 'too many failed attempts', retryAfter: wait }, { 'Retry-After': String(wait) });
+  let k = ''; try { const b = (await readBody(req, 1024)) || {}; k = String(b.key || ''); } catch (e) { return json(res, 400, { error: 'send JSON {"key"}' }); }
+  const r = devkeys.check(k);
+  if (!r) { const now = Date.now(); signinFails.get(key).push(now); signinGlobal.push(now); return json(res, 401, { error: 'expired' }); }
+  signinFails.delete(key);
+  const left = Math.max(60, Math.floor((r.expiresAt - Date.now()) / 1000));
+  console.log(`${new Date().toISOString()} renew: installed app re-signed-in with its device key`);
+  return json(res, 200, { ok: true, expiresAt: new Date(r.expiresAt).toISOString() }, { 'Set-Cookie': [sessionCookie(left), sinceCookie(left, r.expiresAt - devkeys.MAX_AGE_MS)] });
 }
 
 // ---------- phone-only sign-in: device approval (lib/device-approval.js) ----------
@@ -246,7 +274,7 @@ async function handleDevicePoll(req, res) {
   if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: 'cross-site request refused' });
   let b = {}; try { b = (await readBody(req, 1024)) || {}; } catch (e) { return json(res, 400, { error: 'send JSON {"code","secret"}' }); }
   const st = device.poll(b.code, b.secret);
-  if (st === 'approved') return json(res, 200, { status: 'approved' }, { 'Set-Cookie': sessionCookie(PAIR_COOKIE_AGE), 'Cache-Control': 'no-store' });
+  if (st === 'approved') return json(res, 200, { status: 'approved' }, { 'Set-Cookie': sessionCookies(PAIR_COOKIE_AGE), 'Cache-Control': 'no-store' });
   return json(res, 200, { status: st }, { 'Cache-Control': 'no-store' });
 }
 
@@ -288,7 +316,7 @@ async function handlePair(req, res) {
   let code = ''; try { code = String(((await readBody(req, 1024)) || {}).code || ''); } catch (e) { return json(res, 400, { error: 'send JSON {"code": "..."}' }); }
   if (!pairing.redeem(code)) return json(res, 401, { error: 'This pairing code is invalid, used, or expired (codes last 5 minutes). Make a new one on the box.' });
   console.log(`${new Date().toISOString()} pairing: a device was paired via QR (180-day session)`);
-  return json(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(PAIR_COOKIE_AGE) });
+  return json(res, 200, { ok: true }, { 'Set-Cookie': sessionCookies(PAIR_COOKIE_AGE) });
 }
 async function qrPage(res) {
   const { code, expiresAt } = pairing.create();
@@ -315,6 +343,14 @@ async function handleApi(req, res, url, how) {
     return json(res, 200, { demo: DEMO, greetingName: GREETING_NAME, uploads: !DEMO, maxPhotos: uploads.MAX_PER_ANSWER, push: !DEMO && push.enabled() });
   }
   // ---------- Web Push ("Notify me") ----------
+  // Installed-app key (cookie sessions only, same-origin). Stored by the app in IndexedDB; see /signin/renew.
+  if (p === '/api/session/key' && req.method === 'POST') {
+    if (how !== 'cookie') return json(res, 403, { error: 'only a signed-in phone can ask for a device key' });
+    if (req.headers['sec-fetch-site'] && req.headers['sec-fetch-site'] !== 'same-origin') return json(res, 403, { error: 'same-origin only' });
+    const since = +parseCookies(req).md_since || Date.now();
+    const r = devkeys.issue(req.headers['user-agent'], since);
+    return json(res, 200, { key: r.key, expiresAt: new Date(r.expiresAt).toISOString() });
+  }
   if (p === '/api/push/key' && req.method === 'GET') {
     if (DEMO || !push.enabled()) return json(res, 200, { enabled: false });
     return json(res, 200, { enabled: true, publicKey: push.publicKey() });
@@ -613,6 +649,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/signin' && req.method === 'POST') return await handleSignin(req, res);
     if (url.pathname === '/pair' && req.method === 'GET' && !DEMO) return send(res, 200, PAIR_PAGE, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     if (url.pathname === '/pair' && req.method === 'POST') return await handlePair(req, res);
+    if (url.pathname === '/signin/renew' && req.method === 'POST') return await handleRenew(req, res);
     if (url.pathname === '/signin/request' && req.method === 'POST') return await handleDeviceRequest(req, res);
     if (url.pathname === '/signin/request/poll' && req.method === 'POST') return await handleDevicePoll(req, res);
     if (url.pathname.startsWith('/api/device/') && (DEMO || !isBoxLocal(req))) return send(res, 404, 'not found', { 'Cache-Control': 'no-store' });
@@ -631,7 +668,7 @@ const server = http.createServer(async (req, res) => {
     if (how === 'query' && !url.pathname.startsWith('/api/')) {
       // First visit with ?token=: set the httpOnly cookie, then drop the token from the URL bar/history.
       url.searchParams.delete('token');
-      return send(res, 302, 'redirecting', { 'Set-Cookie': sessionCookie(), Location: url.pathname + (url.search || ''), 'Cache-Control': 'no-store' });
+      return send(res, 302, 'redirecting', { 'Set-Cookie': sessionCookies(), Location: url.pathname + (url.search || ''), 'Cache-Control': 'no-store' });
     }
     if (url.pathname === '/signin/qr' && req.method === 'GET') return await qrPage(res);
     if (url.pathname === '/api/pair/qr.png' && req.method === 'POST') {
