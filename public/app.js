@@ -1634,11 +1634,11 @@
   document.documentElement.classList.toggle('reduce-fx', prefs.reduceFx);
 
   const panels = {
-    settings: $('#settingsWrap'), history: $('#historyWrap'), insights: $('#insightsWrap'), recap: $('#recapWrap'),
-    open() { return !this.settings.hidden || !this.history.hidden || !this.insights.hidden || !this.recap.hidden; },
+    settings: $('#settingsWrap'), history: $('#historyWrap'), insights: $('#insightsWrap'), recap: $('#recapWrap'), waiting: $('#waitingWrap'),
+    open() { return !this.settings.hidden || !this.history.hidden || !this.insights.hidden || !this.recap.hidden || !this.waiting.hidden; },
     show(name) { this[name].hidden = false; const x = this[name].querySelector('.panel-x'); if (x) x.focus({ preventScroll: true }); },
     close(name) { this[name].hidden = true; },
-    closeTop() { if (!this.recap.hidden) this.close('recap'); else if (!this.insights.hidden) this.close('insights'); else if (!this.history.hidden) this.close('history'); else this.close('settings'); },
+    closeTop() { if (!this.waiting.hidden) this.close('waiting'); else if (!this.recap.hidden) this.close('recap'); else if (!this.insights.hidden) this.close('insights'); else if (!this.history.hidden) this.close('history'); else this.close('settings'); },
   };
   document.querySelectorAll('[data-close]').forEach((n) => n.addEventListener('click', () => panels.close(n.dataset.close)));
   $('#settingsBtn').addEventListener('click', () => { panels.show('settings'); refreshNotify(); });
@@ -1649,6 +1649,9 @@
   $('#recapRowBtn').addEventListener('click', openRecap);
   $('#tileRecap').addEventListener('click', openRecap);
   if (new URLSearchParams(location.search).get('view') === 'recap') setTimeout(openRecap, 0); // manifest shortcut
+  const openWaiting = () => { panels.show('waiting'); loadWaiting(); };
+  $('#waitingRowBtn').addEventListener('click', openWaiting);
+  if (new URLSearchParams(location.search).get('view') === 'waiting') setTimeout(openWaiting, 0);
 
   // ---------- Insights: GET /api/insights (read-only). Hand-built SVG, no chart library. ----------
   const SVGNS = 'http://www.w3.org/2000/svg';
@@ -1717,6 +1720,29 @@
   }
   function section(title, sub, ...kids) { return h('section', { class: 'ins-sec' }, h('div', { class: 'ins-sec-head' }, h('h4', {}, title), sub ? h('small', {}, sub) : null), ...kids); }
   // ---------- weekly recap (computed by GET /api/recap; read-only) ----------
+  // Skipped & snoozed: real cards + answers only (GET /api/waiting). Empty states say why, never filler.
+  async function loadWaiting() {
+    const body = $('#waitingBody');
+    let d; try { d = await api('/api/waiting'); } catch (e) { body.innerHTML = ''; body.append(h('p', { class: 'panel-sub' }, e.status === 401 ? 'Signed out.' : 'Could not load (offline?)')); return; }
+    const frag = document.createDocumentFragment();
+    const tile = (n, l, cls = '') => h('div', { class: 'ins-tile ' + cls }, h('b', {}, n), h('small', {}, l));
+    const oldest = Math.max(0, ...d.passed.concat(d.waiting).map((r) => r.daysWaiting));
+    frag.append(h('div', { class: 'ins-tiles' }, tile(d.totals.open, 'Open now', d.totals.open ? 'warn' : 'ok'), tile(d.totals.skipsRecorded, 'Skips recorded'),
+      tile(d.totals.snoozesRecorded, 'Snoozes recorded'), tile(d.totals.open ? `${oldest}d` : '–', 'Longest wait')));
+    const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    const days = (n) => n === 0 ? 'today' : `${plural(n, 'day')} waiting`;
+    const list = (items, row, empty) => items.length ? h('ul', { class: 'recap-list' }, ...items.map(row)) : h('p', { class: 'ins-empty' }, empty);
+    frag.append(section('Keeps slipping', 'Open cards you skipped or snoozed, most passed first', list(d.passed, (r) => h('li', { class: 'recap-row' },
+      h('b', {}, `${r.emoji} ${r.title}`.trim()), h('small', {}, [r.skips ? plural(r.skips, 'skip') : '', r.snoozes ? plural(r.snoozes, 'snooze') : '', days(r.daysWaiting), r.source, r.snoozedUntil ? 'back at 6 AM' : ''].filter(Boolean).join(' · '))),
+      d.totals.open ? 'None of the open cards has been skipped or snoozed yet.' : 'Nothing open right now, so nothing is slipping.')));
+    if (d.waiting.length) frag.append(section('Waiting, not yet passed', 'Open cards with no skip or snooze', list(d.waiting.slice(0, 15), (r) => h('li', { class: 'recap-row' },
+      h('b', {}, `${r.emoji} ${r.title}`.trim()), h('small', {}, `${days(r.daysWaiting)} · ${r.source}`)), '')));
+    frag.append(section('Bots with the most open items', 'Open cards per bot', list(d.bots, (b, i) => h('li', { class: 'recap-row' + (i === 0 ? ' recap-top' : '') },
+      h('b', {}, `${b.emoji || '🤖'} ${b.source}`), h('small', {}, `${b.open} open${b.passed ? ` · ${b.passed} passed over` : ''} · oldest ${b.oldestDays}d`)), 'No bot has an open card.')));
+    const first = d.history.firstAnswer ? new Date(d.history.firstAnswer).toLocaleDateString('en-US', { timeZone: TZ, month: 'short', day: 'numeric' }) : null;
+    frag.append(h('p', { class: 'ins-note' }, `${d.history.note} ${first ? `Recorded since ${first}: ${plural(d.history.answers, 'answer')}.` : 'No answers recorded yet.'}${d.demo ? ' Demo: SAMPLE data.' : ''}`));
+    body.innerHTML = ''; body.append(frag);
+  }
   async function loadRecap() {
     const body = $('#recapBody');
     let d;

@@ -129,6 +129,10 @@
           <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg></span>
           <span class="set-txt"><b>Weekly recap</b><small>Decisions this week, what keeps slipping</small></span><span class="set-chev" aria-hidden="true">›</span>
         </button>
+        <button type="button" class="set-row" id="waitingRowBtn">
+          <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2"/><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/></svg></span>
+          <span class="set-txt"><b>Skipped &amp; snoozed</b><small>What keeps slipping, how long, which bots</small></span><span class="set-chev" aria-hidden="true">›</span>
+        </button>
         <button type="button" class="set-row" id="insightsRowBtn">
           <span class="set-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg></span>
           <span class="set-txt"><b>Insights</b><small>What keeps getting skipped, what's due</small></span><span class="set-chev" aria-hidden="true">›</span>
@@ -190,6 +194,14 @@
       <div class="grabber" aria-hidden="true"></div>
       <div class="panel-head"><h3 id="recapTitle">This week</h3><button type="button" class="panel-x" data-close="recap" aria-label="Close weekly recap"><svg class="pk-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/assets/icons.svg#i-skip"/></svg></button></div>
       <div class="ins-scroll" id="recapBody"><p class="panel-sub">Loading…</p></div>
+    </section>
+  </div>
+  <div class="panel-wrap" id="waitingWrap" hidden>
+    <div class="panel-backdrop" data-close="waiting"></div>
+    <section class="panel panel-tall" id="waitingPanel" role="dialog" aria-modal="true" aria-labelledby="waitingTitle">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="panel-head"><h3 id="waitingTitle">Skipped &amp; snoozed</h3><button type="button" class="panel-x" data-close="waiting" aria-label="Close skipped and snoozed"><svg class="pk-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="/assets/icons.svg#i-skip"/></svg></button></div>
+      <div class="ins-scroll" id="waitingBody"><p class="panel-sub">Loading…</p></div>
     </section>
   </div>
   <div class="panel-wrap" id="insightsWrap" hidden>

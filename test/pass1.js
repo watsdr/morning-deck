@@ -9,7 +9,7 @@ const B = process.env.MD_BASE, D = process.env.MD_DATA_DIR;
 if (!B || !D || !D.startsWith(os.tmpdir()) || new URL(B).port === '8787') { console.error('run via node test/isolated.js test/pass1.js --empty'); process.exit(2); }
 const ROOT = path.join(__dirname, '..');
 const TOK = (fs.readFileSync(path.join(ROOT, '.env'), 'utf8').match(/^MD_TOKEN=(.*)$/m) || [])[1];
-const SHOTS = path.join(ROOT, 'run', 'screens-pass1');
+const SHOTS = process.env.MD_SHOTS || path.join(ROOT, 'run', 'screens-pass1');
 fs.mkdirSync(SHOTS, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const auth = { Authorization: `Bearer ${TOK}` };

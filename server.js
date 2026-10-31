@@ -425,6 +425,9 @@ async function handleApi(req, res, url, how) {
     if (fb) cards.push(fb);
     return json(res, 200, { generatedAt: now.toISOString(), count: cards.length, cards: cards.map(cardForClient) });
   }
+  if (p === '/api/waiting' && req.method === 'GET') { // read-only: skipped & snoozed at a glance
+    return json(res, 200, { demo: DEMO, ...require('./lib/waiting').build(core.loadCards(), core.loadAnswers()) });
+  }
   // Read-only at-a-glance stats (same auth as /api/deck: cookie or Bearer). Never writes.
   if (p === '/api/insights' && req.method === 'GET') {
     if (DEMO) return json(res, 200, { demo: true, ...insights.compute({ answers: [] }) });
