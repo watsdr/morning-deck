@@ -13,7 +13,7 @@
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="preload" href="/fonts/jakarta.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/styles.css">
-  <script>try{if(localStorage.getItem("md_theme")==="light")document.documentElement.dataset.theme="light"}catch(e){}</script>
+  <script>try{if(localStorage.getItem("md_theme")==="light"){document.documentElement.dataset.theme="light";var m=document.querySelector('meta[name="color-scheme"]');if(!m){m=document.createElement("meta");m.setAttribute("name","color-scheme");document.head.prepend(m)}m.content="light"}}catch(e){}</script>
 </head>
 <body>
   <div class="sky" aria-hidden="true">
