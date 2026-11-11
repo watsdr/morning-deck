@@ -1612,6 +1612,9 @@
     const light = t === 'light';
     if (light) document.documentElement.dataset.theme = 'light'; else delete document.documentElement.dataset.theme;
     const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = light ? '#f6e9f2' : '#1d1442';
+    let scheme = document.querySelector('meta[name="color-scheme"]');
+    if (!scheme) { scheme = document.createElement('meta'); scheme.setAttribute('name', 'color-scheme'); document.head.prepend(scheme); }
+    scheme.content = light ? 'light' : 'dark';
     document.querySelectorAll('[data-theme-opt]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.themeOpt === (light ? 'light' : 'dark'))));
   }
   const currentTheme = () => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');

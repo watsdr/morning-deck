@@ -31,7 +31,7 @@
           for (const r of j.results || []) { const place = [r.name, r.admin1, r.country].filter(Boolean).join(', '); results.append(h('button', { type: 'button', class: 'f-result', onclick: () => pick({ lat: r.latitude, lon: r.longitude, place }) }, place)); }
         } catch (e) { kit.status(e.message, 'err'); }
       };
-      q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+      q.addEventListener('keydown', (e) => { if (e.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') { e.preventDefault(); search(); } });
       const units = h('select', { class: 'f-input', 'aria-label': 'Units', onchange: (e) => kit.setCfg({ units: e.target.value }) }, h('option', { value: 'metric' }, '°C, km/h, mm'), h('option', { value: 'imperial' }, '°F, mph, inches'));
       units.value = cfg.units || 'metric';
       box.append(
